@@ -225,7 +225,7 @@ class KeyboardIMEService : InputMethodService() {
                 0
             }
             InputConnectionCompat.commitContent(ic, editorInfo, contentInfo, flags, null)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             // フォールバック: URI文字列をテキストとして送る
             currentInputConnection?.commitText(uri.toString(), 1)
         }

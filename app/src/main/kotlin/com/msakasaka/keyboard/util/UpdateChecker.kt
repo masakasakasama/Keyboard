@@ -39,7 +39,7 @@ class UpdateChecker(private val context: Context) {
             if (downloadUrl.isEmpty()) return@withContext null
 
             UpdateInfo(remoteVc, downloadUrl, tag)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             null
         }
     }

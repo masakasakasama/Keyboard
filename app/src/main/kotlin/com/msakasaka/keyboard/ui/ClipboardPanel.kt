@@ -61,7 +61,7 @@ class ClipboardPanel @JvmOverloads constructor(
                     stream?.close()
                     val size = itemSize.toInt()
                     item.bitmap = if (raw != null) Bitmap.createScaledBitmap(raw, size, size, true) else null
-                } catch (_: Exception) {}
+                } catch (e: Exception) {}
             }
         }
     }

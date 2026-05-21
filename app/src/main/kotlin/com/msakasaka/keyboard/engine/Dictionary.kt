@@ -61,7 +61,7 @@ class Dictionary(private val context: Context) {
                     }
                 }
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             // アセットファイルがない場合は組み込み辞書のみ使用
         }
     }
