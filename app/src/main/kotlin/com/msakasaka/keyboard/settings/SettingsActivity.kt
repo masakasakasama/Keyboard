@@ -17,9 +17,12 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
+import android.widget.FrameLayout
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textview.MaterialTextView
 import com.msakasaka.keyboard.R
+import com.msakasaka.keyboard.ui.FlickKeyboardView
+import com.msakasaka.keyboard.ui.QwertyKeyboardView
 import com.msakasaka.keyboard.util.AutoUpdater
 import com.msakasaka.keyboard.util.UpdateChecker
 import kotlinx.coroutines.launch
@@ -50,6 +53,7 @@ class SettingsActivity : AppCompatActivity() {
 
         setupImeStatus()
         setupUpdateCheck()
+        setupKeyboardPreview()
 
         // 設定起動時に毎回アップデート確認（throttle なし）
         lifecycleScope.launch {
@@ -106,6 +110,32 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun setupKeyboardPreview() {
+        val container = findViewById<FrameLayout>(R.id.preview_container)
+        val btnJp = findViewById<MaterialButton>(R.id.btn_preview_japanese)
+        val btnEn = findViewById<MaterialButton>(R.id.btn_preview_english)
+
+        val flickView = FlickKeyboardView(this)
+        val qwertyView = QwertyKeyboardView(this)
+        container.addView(flickView)
+        container.addView(qwertyView)
+        qwertyView.visibility = View.GONE
+
+        btnJp.setOnClickListener {
+            flickView.visibility = View.VISIBLE
+            qwertyView.visibility = View.GONE
+            btnJp.alpha = 1f
+            btnEn.alpha = 0.5f
+        }
+        btnEn.setOnClickListener {
+            flickView.visibility = View.GONE
+            qwertyView.visibility = View.VISIBLE
+            btnJp.alpha = 0.5f
+            btnEn.alpha = 1f
+        }
+        btnEn.alpha = 0.5f
     }
 
     private fun downloadAndInstall(url: String) {
