@@ -11,17 +11,17 @@ data class FlickChars(
 object FlickCharTable {
 
     val JA_KEYS: Map<String, FlickChars> = mapOf(
-        "あ" to FlickChars("あ", "い", "う", "え", "お"),
-        "か" to FlickChars("か", "き", "く", "け", "こ"),
-        "さ" to FlickChars("さ", "し", "す", "せ", "そ"),
-        "た" to FlickChars("た", "ち", "つ", "て", "と"),
-        "な" to FlickChars("な", "に", "ぬ", "ね", "の"),
-        "は" to FlickChars("は", "ひ", "ふ", "へ", "ほ"),
-        "ま" to FlickChars("ま", "み", "む", "め", "も"),
-        "や" to FlickChars("や", "ゆ", "？", "よ", "！"),
-        "ら" to FlickChars("ら", "り", "る", "れ", "ろ"),
-        "わ" to FlickChars("わ", "を", "ん", "ー", "〜"),
-        "。" to FlickChars("。", "、", "？", "！", "・")
+        "あ" to FlickChars("あ", "う", "え", "お", "い"),
+        "か" to FlickChars("か", "く", "け", "こ", "き"),
+        "さ" to FlickChars("さ", "す", "せ", "そ", "し"),
+        "た" to FlickChars("た", "つ", "て", "と", "ち"),
+        "な" to FlickChars("な", "ぬ", "ね", "の", "に"),
+        "は" to FlickChars("は", "ふ", "へ", "ほ", "ひ"),
+        "ま" to FlickChars("ま", "む", "め", "も", "み"),
+        "や" to FlickChars("や", "よ", "？", "！", "ゆ"),
+        "ら" to FlickChars("ら", "る", "れ", "ろ", "り"),
+        "わ" to FlickChars("わ", "ん", "ー", "〜", "を"),
+        "。" to FlickChars("。", "？", "！", "・", "、")
     )
 
     // 行ごとの小文字マップ（小/゛キー用）
