@@ -9,22 +9,36 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.UnderlineSpan
 import android.view.View
 import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
+import android.widget.FrameLayout
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
-import android.widget.FrameLayout
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textview.MaterialTextView
 import com.msakasaka.keyboard.R
+import com.msakasaka.keyboard.engine.Dictionary
+import com.msakasaka.keyboard.engine.InputMode
+import com.msakasaka.keyboard.engine.InputState
+import com.msakasaka.keyboard.engine.JapaneseInputEngine
+import com.msakasaka.keyboard.ui.CandidateView
 import com.msakasaka.keyboard.ui.FlickKeyboardView
+import com.msakasaka.keyboard.ui.KeyboardListener
 import com.msakasaka.keyboard.ui.QwertyKeyboardView
 import com.msakasaka.keyboard.util.AutoUpdater
 import com.msakasaka.keyboard.util.UpdateChecker
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -32,6 +46,10 @@ class SettingsActivity : AppCompatActivity() {
 
     private lateinit var updateChecker: UpdateChecker
     private var pendingDownloadId: Long = -1
+
+    private lateinit var previewEngine: JapaneseInputEngine
+    private val previewScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val previewCommitted = StringBuilder()
 
     private val downloadReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
@@ -55,7 +73,6 @@ class SettingsActivity : AppCompatActivity() {
         setupUpdateCheck()
         setupKeyboardPreview()
 
-        // 設定起動時に毎回アップデート確認（throttle なし）
         lifecycleScope.launch {
             try { AutoUpdater(this@SettingsActivity).checkAndDownloadIfNeeded(force = true) } catch (_: Exception) {}
         }
@@ -68,6 +85,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        previewScope.cancel()
         unregisterReceiver(downloadReceiver)
         super.onDestroy()
     }
@@ -116,6 +134,8 @@ class SettingsActivity : AppCompatActivity() {
         val container = findViewById<FrameLayout>(R.id.preview_container)
         val btnJp = findViewById<MaterialButton>(R.id.btn_preview_japanese)
         val btnEn = findViewById<MaterialButton>(R.id.btn_preview_english)
+        val inputText = findViewById<EditText>(R.id.preview_input_text)
+        val candidateView = findViewById<CandidateView>(R.id.preview_candidate_view)
 
         val flickView = FlickKeyboardView(this)
         val qwertyView = QwertyKeyboardView(this)
@@ -123,19 +143,140 @@ class SettingsActivity : AppCompatActivity() {
         container.addView(qwertyView)
         qwertyView.visibility = View.GONE
 
+        // prevent system keyboard from showing
+        inputText.showSoftInputOnFocus = false
+
+        val dict = Dictionary(this)
+        previewEngine = JapaneseInputEngine(dict)
+        previewScope.launch(Dispatchers.IO) { dict.ensureLoaded() }
+
+        previewEngine.onStateChanged = { snapshot ->
+            val full = previewCommitted.toString() + snapshot.composing
+            val span = SpannableStringBuilder(full)
+            if (snapshot.composing.isNotEmpty()) {
+                val s = previewCommitted.length
+                span.setSpan(UnderlineSpan(), s, s + snapshot.composing.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            inputText.text = span
+            inputText.setSelection(full.length)
+            candidateView.candidates = snapshot.candidates
+            candidateView.selectedIndex = snapshot.selectedCandidateIndex
+            if (snapshot.state == InputState.IDLE) candidateView.candidates = emptyList()
+        }
+
+        candidateView.onCandidateClick = { index ->
+            val selected = previewEngine.selectCandidate(index)
+            previewCommitted.append(selected)
+            inputText.setText(previewCommitted.toString())
+            inputText.setSelection(previewCommitted.length)
+        }
+
+        val listener = object : KeyboardListener {
+            override fun onChar(ch: String) {
+                if (previewEngine.mode == InputMode.ENGLISH && !ch.matches(Regex("[a-zA-Z]"))) {
+                    commitPreviewComposing(inputText)
+                    previewCommitted.append(ch)
+                    inputText.setText(previewCommitted.toString())
+                    inputText.setSelection(previewCommitted.length)
+                } else {
+                    previewEngine.appendChar(ch)
+                }
+            }
+
+            override fun onBackspace() {
+                if (!previewEngine.backspace()) {
+                    if (previewCommitted.isNotEmpty()) {
+                        previewCommitted.deleteCharAt(previewCommitted.length - 1)
+                        inputText.setText(previewCommitted.toString())
+                        inputText.setSelection(previewCommitted.length)
+                    }
+                }
+            }
+
+            override fun onEnter() {
+                when (previewEngine.state) {
+                    InputState.COMPOSING -> commitPreviewComposing(inputText)
+                    InputState.CONVERTING -> {
+                        val s = previewEngine.selectCandidate(previewEngine.selectedIndex)
+                        previewCommitted.append(s)
+                        inputText.setText(previewCommitted.toString())
+                        inputText.setSelection(previewCommitted.length)
+                    }
+                    InputState.IDLE -> {
+                        previewCommitted.append("\n")
+                        inputText.setText(previewCommitted.toString())
+                        inputText.setSelection(previewCommitted.length)
+                    }
+                }
+            }
+
+            override fun onSpace() {
+                when (previewEngine.state) {
+                    InputState.COMPOSING -> {
+                        if (previewEngine.mode == InputMode.ENGLISH) {
+                            commitPreviewComposing(inputText)
+                            previewCommitted.append(" ")
+                            inputText.setText(previewCommitted.toString())
+                            inputText.setSelection(previewCommitted.length)
+                        } else {
+                            previewEngine.startConversion()
+                        }
+                    }
+                    InputState.CONVERTING -> previewEngine.nextCandidate()
+                    InputState.IDLE -> {
+                        val sp = if (previewEngine.mode == InputMode.JAPANESE) "　" else " "
+                        previewCommitted.append(sp)
+                        inputText.setText(previewCommitted.toString())
+                        inputText.setSelection(previewCommitted.length)
+                    }
+                }
+            }
+
+            override fun onConvert() {
+                when (previewEngine.state) {
+                    InputState.COMPOSING -> previewEngine.startConversion()
+                    InputState.CONVERTING -> previewEngine.nextCandidate()
+                    else -> {}
+                }
+            }
+
+            override fun onModifier() {
+                if (previewEngine.state == InputState.CONVERTING) previewEngine.cancelConversion()
+                previewEngine.applyModifierToLast()
+            }
+
+            override fun onSwitchMode() {
+                commitPreviewComposing(inputText)
+                previewEngine.toggleMode()
+                flickView.currentMode = previewEngine.mode
+            }
+
+            override fun onClipboardOpen() {}
+        }
+
+        flickView.listener = listener
+        qwertyView.listener = listener
+
         btnJp.setOnClickListener {
             flickView.visibility = View.VISIBLE
             qwertyView.visibility = View.GONE
-            btnJp.alpha = 1f
-            btnEn.alpha = 0.5f
+            btnJp.alpha = 1f; btnEn.alpha = 0.5f
         }
         btnEn.setOnClickListener {
             flickView.visibility = View.GONE
             qwertyView.visibility = View.VISIBLE
-            btnJp.alpha = 0.5f
-            btnEn.alpha = 1f
+            btnJp.alpha = 0.5f; btnEn.alpha = 1f
         }
         btnEn.alpha = 0.5f
+    }
+
+    private fun commitPreviewComposing(inputText: EditText) {
+        val text = previewEngine.commitComposing()
+        if (text.isNotEmpty()) {
+            previewCommitted.append(text)
+            inputText.setText(previewCommitted.toString())
+            inputText.setSelection(previewCommitted.length)
+        }
     }
 
     private fun downloadAndInstall(url: String) {
