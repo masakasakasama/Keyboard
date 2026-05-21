@@ -97,10 +97,12 @@ class KeyboardIMEService : InputMethodService() {
         // commitText() replaces any current composing region — no finishComposingText() needed
         mainView.candidateView.onCandidateClick = { index ->
             if (engine.state == InputState.IDLE && isShowingAiPredictions) {
-                val prediction = mainView.candidateView.candidates.getOrNull(index) ?: return@onCandidateClick
-                isShowingAiPredictions = false
-                currentInputConnection?.commitText("$prediction ", 1)
-                triggerAiPrediction()
+                val prediction = mainView.candidateView.candidates.getOrNull(index)
+                if (prediction != null) {
+                    isShowingAiPredictions = false
+                    currentInputConnection?.commitText("$prediction ", 1)
+                    triggerAiPrediction()
+                }
             } else {
                 val selected = engine.selectCandidate(index)
                 currentInputConnection?.commitText(selected, 1)
