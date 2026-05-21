@@ -13,33 +13,36 @@ class AIPrediction(private val apiKey: String) {
         if (apiKey.isBlank()) return@withContext emptyList()
         try {
             val context = textBefore.takeLast(200)
-            val url = URL("https://api.anthropic.com/v1/messages")
-            val conn = url.openConnection() as HttpURLConnection
+            val conn = URL("https://api.groq.com/openai/v1/chat/completions")
+                .openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
-            conn.setRequestProperty("x-api-key", apiKey)
-            conn.setRequestProperty("anthropic-version", "2023-06-01")
+            conn.setRequestProperty("Authorization", "Bearer $apiKey")
             conn.setRequestProperty("Content-Type", "application/json")
             conn.connectTimeout = 6_000
             conn.readTimeout = 10_000
             conn.doOutput = true
 
-            val prompt = "Complete this text naturally. Return ONLY a JSON array of 5 short next-word or next-phrase suggestions (1-3 words each). No explanation, just the JSON array.\n\nText: \"$context\""
-
             val body = JSONObject().apply {
-                put("model", "claude-haiku-4-5-20251001")
+                put("model", "llama-3.1-8b-instant")
                 put("max_tokens", 120)
-                put("messages", JSONArray().put(
-                    JSONObject().put("role", "user").put("content", prompt)
-                ))
+                put("temperature", 0.3)
+                put("messages", JSONArray().apply {
+                    put(JSONObject().put("role", "system").put("content",
+                        "You are a next-word predictor for a mobile keyboard. " +
+                        "Return ONLY a JSON array of 5 short suggestions (1-3 words each). No explanation."))
+                    put(JSONObject().put("role", "user").put("content",
+                        "Continue this text: \"$context\""))
+                })
             }.toString()
 
             conn.outputStream.use { it.write(body.toByteArray()) }
 
             val raw = conn.inputStream.bufferedReader().readText()
             val text = JSONObject(raw)
-                .getJSONArray("content")
+                .getJSONArray("choices")
                 .getJSONObject(0)
-                .getString("text")
+                .getJSONObject("message")
+                .getString("content")
                 .trim()
                 .removePrefix("```json")
                 .removePrefix("```")

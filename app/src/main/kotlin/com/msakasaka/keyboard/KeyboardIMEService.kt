@@ -315,7 +315,7 @@ class KeyboardIMEService : InputMethodService() {
 
     private fun triggerAiPrediction() {
         if (engine.mode != InputMode.ENGLISH) return
-        val key = settings.claudeApiKey
+        val key = settings.groqApiKey
         if (key.isBlank()) return
         val context = currentInputConnection?.getTextBeforeCursor(200, 0)?.toString() ?: return
         if (context.isBlank()) return
