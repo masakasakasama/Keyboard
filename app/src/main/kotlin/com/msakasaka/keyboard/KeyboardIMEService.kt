@@ -14,7 +14,6 @@ import com.msakasaka.keyboard.engine.InputMode
 import com.msakasaka.keyboard.engine.InputState
 import com.msakasaka.keyboard.engine.JapaneseInputEngine
 import com.msakasaka.keyboard.settings.KeyboardSettings
-import com.msakasaka.keyboard.ui.CandidateView
 import com.msakasaka.keyboard.ui.KeyboardListener
 import com.msakasaka.keyboard.ui.MainKeyboardView
 import com.msakasaka.keyboard.util.ClipboardHelper
@@ -70,14 +69,10 @@ class KeyboardIMEService : InputMethodService() {
             }
         }
 
+        // commitText() replaces any current composing region — no finishComposingText() needed
         mainView.candidateView.onCandidateClick = { index ->
             val selected = engine.selectCandidate(index)
-            currentInputConnection?.apply {
-                finishComposingText()
-                commitText(selected, 1)
-            }
-            engine.reset()
-            mainView.candidateView.candidates = emptyList()
+            currentInputConnection?.commitText(selected, 1)
         }
 
         val keyListener = object : KeyboardListener {
@@ -121,62 +116,61 @@ class KeyboardIMEService : InputMethodService() {
 
     private fun handleChar(ch: String) {
         if (engine.mode == InputMode.ENGLISH) {
-            currentInputConnection?.commitText(ch, 1)
+            if (ch.matches(Regex("[a-zA-Z]"))) {
+                // アルファベットはコンポジションに溜めて予測変換
+                engine.appendChar(ch.lowercase())
+            } else {
+                // 記号・数字はコンポジション確定→記号入力
+                commitEnglishComposing()
+                currentInputConnection?.commitText(ch, 1)
+            }
             return
         }
-        // 日本語モード: コンポジションに追加
         engine.appendChar(ch)
     }
 
     private fun handleBackspace() {
         val consumed = engine.backspace()
         if (!consumed) {
-            // コンポジションが空→テキストフィールドから1文字削除
             currentInputConnection?.deleteSurroundingText(1, 0)
         } else if (engine.state == InputState.IDLE) {
-            currentInputConnection?.finishComposingText()
+            // コンポジションが空になった → ICからも削除
+            currentInputConnection?.setComposingText("", 1)
         }
     }
 
     private fun handleEnter() {
         when (engine.state) {
             InputState.COMPOSING -> {
+                // commitText() はコンポジション領域をそのまま確定するので finishComposing 不要
                 val text = engine.commitComposing()
-                currentInputConnection?.apply {
-                    finishComposingText()
-                    commitText(text, 1)
-                }
+                currentInputConnection?.commitText(text, 1)
             }
             InputState.CONVERTING -> {
                 val selected = engine.selectCandidate(engine.selectedIndex)
-                currentInputConnection?.apply {
-                    finishComposingText()
-                    commitText(selected, 1)
-                }
-                engine.reset()
+                currentInputConnection?.commitText(selected, 1)
             }
             InputState.IDLE -> {
                 sendDefaultEditorAction(true)
             }
         }
-        mainView.candidateView.candidates = emptyList()
     }
 
     private fun handleSpace() {
         when (engine.state) {
             InputState.COMPOSING -> {
-                // スペースで変換開始
-                engine.startConversion()
-            }
-            InputState.CONVERTING -> {
-                engine.nextCandidate()
-            }
-            InputState.IDLE -> {
-                if (engine.mode == InputMode.JAPANESE) {
-                    currentInputConnection?.commitText("　", 1) // 全角スペース
-                } else {
+                if (engine.mode == InputMode.ENGLISH) {
+                    // 英語モード: 現在の単語を確定してスペース入力
+                    commitEnglishComposing()
                     currentInputConnection?.commitText(" ", 1)
+                } else {
+                    engine.startConversion()
                 }
+            }
+            InputState.CONVERTING -> engine.nextCandidate()
+            InputState.IDLE -> {
+                val sp = if (engine.mode == InputMode.JAPANESE) "　" else " "
+                currentInputConnection?.commitText(sp, 1)
             }
         }
     }
@@ -190,38 +184,20 @@ class KeyboardIMEService : InputMethodService() {
     }
 
     private fun handleModifier() {
-        if (engine.state == InputState.CONVERTING) {
-            engine.cancelConversion()
-        }
+        if (engine.state == InputState.CONVERTING) engine.cancelConversion()
         engine.applyModifierToLast()
     }
 
     private fun handleSwitchMode() {
-        // コンポジション中は先にコミット
-        if (engine.state != InputState.IDLE) {
-            val text = engine.commitComposing()
-            currentInputConnection?.apply {
-                finishComposingText()
-                commitText(text, 1)
-            }
-            engine.reset()
-        }
+        commitEnglishComposing()
         engine.toggleMode()
         mainView.currentMode = engine.mode
     }
 
     private fun handleNumberMode() {
-        if (engine.state != InputState.IDLE) {
-            val text = engine.commitComposing()
-            currentInputConnection?.apply {
-                finishComposingText()
-                commitText(text, 1)
-            }
-            engine.reset()
-        }
+        commitEnglishComposing()
         engine.setMode(InputMode.ENGLISH)
         mainView.showNumberKeyboard()
-        mainView.candidateView.candidates = emptyList()
     }
 
     private fun handleExitNumberMode() {
@@ -251,11 +227,18 @@ class KeyboardIMEService : InputMethodService() {
         mainView.toggleClipboard(images)
     }
 
+    /** 英語コンポジション中のテキストを確定する */
+    private fun commitEnglishComposing() {
+        if (engine.composing.isNotEmpty()) {
+            val text = engine.commitComposing()
+            currentInputConnection?.commitText(text, 1)
+        }
+    }
+
     // ────────────── image commit ──────────────
 
     private fun commitImage(uri: Uri, mimeType: String) {
         val ic = currentInputConnection ?: return
-
         try {
             val contentInfo = InputContentInfo(
                 uri,
@@ -267,10 +250,8 @@ class KeyboardIMEService : InputMethodService() {
                 InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION,
                 null
             )
-        } catch (e: Exception) {
-            // フォールバック: URI文字列をテキストとして送る
+        } catch (_: Exception) {
             currentInputConnection?.commitText(uri.toString(), 1)
         }
     }
-
 }

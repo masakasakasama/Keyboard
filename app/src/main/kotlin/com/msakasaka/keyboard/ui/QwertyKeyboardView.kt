@@ -2,6 +2,8 @@ package com.msakasaka.keyboard.ui
 
 import android.content.Context
 import android.graphics.*
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
@@ -62,6 +64,11 @@ class QwertyKeyboardView @JvmOverloads constructor(
     }
 
     private var pressedKey: Pair<Int, Int>? = null
+
+    private val bsHandler = Handler(Looper.getMainLooper())
+    private val bsRunnable = object : Runnable {
+        override fun run() { listener?.onBackspace(); bsHandler.postDelayed(this, 50) }
+    }
 
     // precomputed key rects per row: [row][col] -> RectF
     private val keyRects = mutableListOf<List<RectF>>()
@@ -146,9 +153,13 @@ class QwertyKeyboardView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 val hit = hitTest(event.x, event.y)
                 pressedKey = hit
+                if (hit != null && rows[hit.first].getOrNull(hit.second) == "⌫") {
+                    bsHandler.postDelayed(bsRunnable, 500)
+                }
                 invalidate()
             }
             MotionEvent.ACTION_UP -> {
+                bsHandler.removeCallbacks(bsRunnable)
                 val hit = hitTest(event.x, event.y)
                 if (hit != null && hit == pressedKey) {
                     handleKey(hit.first, hit.second)
@@ -157,6 +168,7 @@ class QwertyKeyboardView @JvmOverloads constructor(
                 invalidate()
             }
             MotionEvent.ACTION_CANCEL -> {
+                bsHandler.removeCallbacks(bsRunnable)
                 pressedKey = null
                 invalidate()
             }

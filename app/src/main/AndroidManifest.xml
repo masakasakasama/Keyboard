@@ -26,6 +26,13 @@
                 android:resource="@xml/method" />
         </service>
 
+        <!-- User Dictionary Activity -->
+        <activity
+            android:name=".settings.UserDictionaryActivity"
+            android:exported="false"
+            android:label="ユーザー辞書"
+            android:parentActivityName=".settings.SettingsActivity" />
+
         <!-- Settings / Launcher Activity -->
         <activity
             android:name=".settings.SettingsActivity"

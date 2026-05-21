@@ -27,6 +27,13 @@ android {
 
     // 同じ署名キーで上書きインストール可能にするための設定
     signingConfigs {
+        // リポジトリに含まれた固定 debug キー → CI 毎回変わらず上書きインストール可
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         if (keystorePropertiesFile.exists()) {
             create("release") {
                 storeFile = file(keystoreProperties["storeFile"] as String)

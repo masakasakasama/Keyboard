@@ -2,6 +2,8 @@ package com.msakasaka.keyboard.ui
 
 import android.content.Context
 import android.graphics.*
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
@@ -78,6 +80,11 @@ class FlickKeyboardView @JvmOverloads constructor(
 
     private val FLICK_THRESHOLD_DP = 20f
     private val flickThreshold get() = FLICK_THRESHOLD_DP * resources.displayMetrics.density
+
+    private val bsHandler = Handler(Looper.getMainLooper())
+    private val bsRunnable = object : Runnable {
+        override fun run() { listener?.onBackspace(); bsHandler.postDelayed(this, 50) }
+    }
 
     private val normalBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = ContextCompat.getColor(context, R.color.key_normal_bg)
@@ -198,6 +205,8 @@ class FlickKeyboardView @JvmOverloads constructor(
         return true
     }
 
+    private fun isBackspaceKey(row: Int, col: Int) = col == 4 && row == 0
+
     private fun handleDown(x: Float, y: Float) {
         touchStartX = x
         touchStartY = y
@@ -211,6 +220,7 @@ class FlickKeyboardView @JvmOverloads constructor(
             if (r >= 0 && c >= 0) {
                 pressedRow = r
                 pressedCol = c
+                if (isBackspaceKey(r, c)) bsHandler.postDelayed(bsRunnable, 500)
             } else {
                 pressedRow = -2
                 pressedCol = -1
@@ -234,6 +244,7 @@ class FlickKeyboardView @JvmOverloads constructor(
     }
 
     private fun handleUp(x: Float, y: Float) {
+        bsHandler.removeCallbacks(bsRunnable)
         if (!flickCommitted) {
             when {
                 pressedRow == -1 && pressedCol in 0..9 -> listener?.onChar(numbers[pressedCol])

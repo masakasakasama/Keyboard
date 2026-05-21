@@ -15,6 +15,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textview.MaterialTextView
@@ -131,5 +132,9 @@ class SettingsActivity : AppCompatActivity() {
 class SettingsFragment : PreferenceFragmentCompat() {
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         setPreferencesFromResource(R.xml.keyboard_settings, rootKey)
+        findPreference<Preference>("user_dictionary")?.setOnPreferenceClickListener {
+            startActivity(Intent(requireContext(), UserDictionaryActivity::class.java))
+            true
+        }
     }
 }

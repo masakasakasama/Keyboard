@@ -17,4 +17,9 @@
         android:min="70"
         android:max="100" />
 
+    <Preference
+        android:key="user_dictionary"
+        android:title="ユーザー辞書"
+        android:summary="自分だけの単語を登録・管理" />
+
 </PreferenceScreen>

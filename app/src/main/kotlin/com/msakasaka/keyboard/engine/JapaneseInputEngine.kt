@@ -104,7 +104,9 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
         val list = _candidates
         if (index < 0 || index >= list.size) return _composing.toString()
         val selected = list[index]
+        val reading = _composing.toString()
         reset()
+        dictionary.learn(reading, selected)
         return selected
     }
 

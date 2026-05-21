@@ -2,6 +2,8 @@ package com.msakasaka.keyboard.ui
 
 import android.content.Context
 import android.graphics.*
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
@@ -54,6 +56,11 @@ class NumberKeyboardView @JvmOverloads constructor(
     private var touchStartX = 0f
     private var touchStartY = 0f
     private var flickCommitted = false
+
+    private val bsHandler = Handler(Looper.getMainLooper())
+    private val bsRunnable = object : Runnable {
+        override fun run() { listener?.onBackspace(); bsHandler.postDelayed(this, 50) }
+    }
 
     private val FLICK_THRESHOLD_DP = 20f
     private val flickThreshold get() = FLICK_THRESHOLD_DP * resources.displayMetrics.density
@@ -148,6 +155,7 @@ class NumberKeyboardView @JvmOverloads constructor(
                 touchStartX = event.x
                 touchStartY = event.y
                 flickCommitted = false
+                if (keys[hit.first][hit.second] == "⌫") bsHandler.postDelayed(bsRunnable, 500)
                 invalidate()
             }
             MotionEvent.ACTION_MOVE -> {
@@ -173,6 +181,7 @@ class NumberKeyboardView @JvmOverloads constructor(
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                bsHandler.removeCallbacks(bsRunnable)
                 if (!flickCommitted && pressedRow >= 0) handleTap(pressedRow, pressedCol)
                 pressedRow = -1
                 pressedCol = -1
