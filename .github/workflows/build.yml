@@ -1,0 +1,47 @@
+name: Build APK
+
+on:
+  push:
+    branches: ['claude/android-keyboard-app-tHMVN', 'main']
+  workflow_dispatch:   # スマホのGitHubサイトから手動実行できる
+
+permissions:
+  contents: write      # Releases 作成に必要
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # gradle-wrapper.jar なしで動かすため gradle-version を直接指定
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.6'
+
+      - name: Build Debug APK
+        run: gradle :app:assembleDebug
+
+      # Releases に APK を公開（スマホブラウザから直接ダウンロード可）
+      - name: Publish to GitHub Releases
+        run: |
+          TAG="build-$(date +'%Y%m%d-%H%M')"
+          gh release create "$TAG" \
+            app/build/outputs/apk/debug/app-debug.apk#MyKeyboard.apk \
+            --title "MyKeyboard $TAG" \
+            --notes "## インストール手順
+          1. 下の **MyKeyboard.apk** をタップしてダウンロード
+          2. ダウンロード後にタップしてインストール（「提供元不明のアプリ」を許可）
+          3. 設定 → 一般管理 → キーボード → 画面上のキーボード → MyKeyboard を有効化
+          4. デフォルトキーボードに設定" \
+            --latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
