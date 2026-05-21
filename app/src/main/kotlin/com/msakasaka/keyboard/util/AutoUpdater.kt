@@ -9,9 +9,12 @@ class AutoUpdater(private val context: Context) {
 
     private val prefs = context.getSharedPreferences("updater", Context.MODE_PRIVATE)
 
-    suspend fun checkAndDownloadIfNeeded() {
-        val lastCheck = prefs.getLong("last_check", 0L)
-        if (System.currentTimeMillis() - lastCheck < 24 * 3600 * 1000L) return
+    /** force=true の場合は24時間スロットルを無視して即チェック（設定画面からの明示的な確認用） */
+    suspend fun checkAndDownloadIfNeeded(force: Boolean = false) {
+        if (!force) {
+            val lastCheck = prefs.getLong("last_check", 0L)
+            if (System.currentTimeMillis() - lastCheck < 24 * 3600 * 1000L) return
+        }
         prefs.edit().putLong("last_check", System.currentTimeMillis()).apply()
 
         // UpdateChecker.check() は内部で新バージョンがなければ null を返す

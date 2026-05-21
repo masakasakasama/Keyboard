@@ -20,6 +20,7 @@ import androidx.preference.PreferenceFragmentCompat
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textview.MaterialTextView
 import com.msakasaka.keyboard.R
+import com.msakasaka.keyboard.util.AutoUpdater
 import com.msakasaka.keyboard.util.UpdateChecker
 import kotlinx.coroutines.launch
 import java.io.File
@@ -49,6 +50,11 @@ class SettingsActivity : AppCompatActivity() {
 
         setupImeStatus()
         setupUpdateCheck()
+
+        // 設定起動時に毎回アップデート確認（throttle なし）
+        lifecycleScope.launch {
+            try { AutoUpdater(this@SettingsActivity).checkAndDownloadIfNeeded(force = true) } catch (_: Exception) {}
+        }
 
         ContextCompat.registerReceiver(
             this, downloadReceiver,
