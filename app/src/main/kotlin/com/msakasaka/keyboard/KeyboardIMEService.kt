@@ -4,11 +4,10 @@ import android.content.SharedPreferences
 import android.content.ClipDescription
 import android.inputmethodservice.InputMethodService
 import android.net.Uri
-import android.os.Build
 import android.view.View
 import android.view.inputmethod.EditorInfo
-import androidx.core.view.inputmethod.InputConnectionCompat
-import androidx.core.view.inputmethod.InputContentInfoCompat
+import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputContentInfo
 import com.msakasaka.keyboard.engine.Dictionary
 import com.msakasaka.keyboard.engine.InputMode
 import com.msakasaka.keyboard.engine.InputState
@@ -211,20 +210,18 @@ class KeyboardIMEService : InputMethodService() {
 
     private fun commitImage(uri: Uri, mimeType: String) {
         val ic = currentInputConnection ?: return
-        val editorInfo = currentInputEditorInfo ?: return
 
         try {
-            val contentInfo = InputContentInfoCompat(
+            val contentInfo = InputContentInfo(
                 uri,
                 ClipDescription("image", arrayOf(mimeType)),
                 null
             )
-            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
-                InputConnectionCompat.INPUT_CONTENT_GRANT_READ_URI_PERMISSION
-            } else {
-                0
-            }
-            InputConnectionCompat.commitContent(ic, editorInfo, contentInfo, flags, null)
+            ic.commitContent(
+                contentInfo,
+                InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION,
+                null
+            )
         } catch (e: Exception) {
             // フォールバック: URI文字列をテキストとして送る
             currentInputConnection?.commitText(uri.toString(), 1)
