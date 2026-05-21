@@ -65,6 +65,12 @@ class MainKeyboardView @JvmOverloads constructor(
         numberKeyboard.keyHeightDp = dp
     }
 
+    fun applyKeyWidthScale(scale: Int) {
+        flickKeyboard.widthScale = scale
+        qwertyKeyboard.widthScale = scale
+        numberKeyboard.widthScale = scale
+    }
+
     fun showClipboard(images: List<ClipboardImage>) {
         clipboardPanel.images = images
         if (!isClipboardShown) {

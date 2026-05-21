@@ -30,6 +30,7 @@ class KeyboardIMEService : InputMethodService() {
     private val settingsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             "key_height_dp" -> mainView.applyKeyHeight(settings.keyHeightDp)
+            "key_width_scale" -> mainView.applyKeyWidthScale(settings.keyWidthScale)
         }
     }
 
@@ -50,12 +51,13 @@ class KeyboardIMEService : InputMethodService() {
     override fun onCreateInputView(): View {
         mainView = MainKeyboardView(this)
         mainView.applyKeyHeight(settings.keyHeightDp)
+        mainView.applyKeyWidthScale(settings.keyWidthScale)
 
         engine.onStateChanged = { snapshot ->
             when (snapshot.state) {
                 InputState.COMPOSING -> {
                     currentInputConnection?.setComposingText(snapshot.composing, 1)
-                    mainView.candidateView.candidates = emptyList()
+                    mainView.candidateView.candidates = snapshot.candidates
                 }
                 InputState.CONVERTING -> {
                     currentInputConnection?.setComposingText(snapshot.composing, 1)
@@ -100,6 +102,7 @@ class KeyboardIMEService : InputMethodService() {
             commitImage(uri, mimeType)
             mainView.hideClipboard()
         }
+        mainView.clipboardPanel.onClose = { mainView.hideClipboard() }
 
         return mainView
     }

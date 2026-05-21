@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.*
 import android.net.Uri
 import android.graphics.BitmapFactory
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
@@ -15,17 +17,18 @@ class ClipboardPanel @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : View(context, attrs) {
 
-    data class ImageItem(val uri: Uri, val mimeType: String, var bitmap: Bitmap? = null)
+    data class ImageItem(val uri: Uri, val mimeType: String, @Volatile var bitmap: Bitmap? = null)
 
     var images: List<ClipboardImage> = emptyList()
         set(value) {
             field = value
             items = value.map { ImageItem(it.uri, it.mimeType) }
-            loadThumbnails()
+            loadThumbnailsAsync()
             invalidate()
         }
 
     var onImageSelected: ((Uri, String) -> Unit)? = null
+    var onClose: (() -> Unit)? = null
 
     private var items = listOf<ImageItem>()
     private var canvasScrollX = 0f
@@ -34,6 +37,9 @@ class ClipboardPanel @JvmOverloads constructor(
     private val itemSize = 160f
     private val itemGap = 12f
     private val padding = 16f
+    private val closeBtnSize = 40f
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val bgPaint = Paint().apply {
         color = ContextCompat.getColor(context, R.color.clipboard_panel_bg)
@@ -51,23 +57,43 @@ class ClipboardPanel @JvmOverloads constructor(
         textAlign = Paint.Align.CENTER
         textSize = 36f
     }
+    private val closeBtnBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(180, 60, 60, 60)
+    }
+    private val closeBtnText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textAlign = Paint.Align.CENTER
+        textSize = 28f
+        typeface = Typeface.DEFAULT_BOLD
+    }
 
-    private fun loadThumbnails() {
-        items.forEach { item ->
-            if (item.bitmap == null) {
-                try {
-                    val stream = context.contentResolver.openInputStream(item.uri)
-                    val raw = BitmapFactory.decodeStream(stream)
-                    stream?.close()
-                    val size = itemSize.toInt()
-                    item.bitmap = if (raw != null) Bitmap.createScaledBitmap(raw, size, size, true) else null
-                } catch (e: Exception) {}
+    private fun loadThumbnailsAsync() {
+        val snapshot = items.toList()
+        Thread {
+            snapshot.forEach { item ->
+                if (item.bitmap == null) {
+                    try {
+                        val stream = context.contentResolver.openInputStream(item.uri)
+                        val raw = BitmapFactory.decodeStream(stream)
+                        stream?.close()
+                        val size = itemSize.toInt()
+                        item.bitmap = if (raw != null) Bitmap.createScaledBitmap(raw, size, size, true) else null
+                        mainHandler.post { invalidate() }
+                    } catch (_: Exception) {}
+                }
             }
-        }
+        }.start()
     }
 
     override fun onDraw(canvas: Canvas) {
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
+
+        // Close button top-right
+        val closeBtnRight = width.toFloat() - 8f
+        val closeBtnLeft = closeBtnRight - closeBtnSize
+        val closeBtnRect = RectF(closeBtnLeft, 8f, closeBtnRight, 8f + closeBtnSize)
+        canvas.drawRoundRect(closeBtnRect, 6f, 6f, closeBtnBg)
+        canvas.drawText("×", closeBtnRect.centerX(), closeBtnRect.centerY() + closeBtnText.textSize * 0.35f, closeBtnText)
 
         if (items.isEmpty()) {
             canvas.drawText(
@@ -93,6 +119,12 @@ class ClipboardPanel @JvmOverloads constructor(
         }
     }
 
+    private fun isCloseBtn(x: Float, y: Float): Boolean {
+        val closeBtnRight = width.toFloat() - 8f
+        val closeBtnLeft = closeBtnRight - closeBtnSize
+        return x >= closeBtnLeft && x <= closeBtnRight && y >= 8f && y <= 8f + closeBtnSize
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
@@ -112,6 +144,10 @@ class ClipboardPanel @JvmOverloads constructor(
             }
             MotionEvent.ACTION_UP -> {
                 if (!isDragging) {
+                    if (isCloseBtn(event.x, event.y)) {
+                        onClose?.invoke()
+                        return true
+                    }
                     val tx = event.x + canvasScrollX
                     var x = padding
                     items.forEach { item ->

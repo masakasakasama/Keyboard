@@ -48,7 +48,9 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
         if (_state == InputState.CONVERTING) cancelConversion()
         _composing.append(char)
         _state = InputState.COMPOSING
+        _candidates = emptyList()
         notifyChanged()
+        triggerPredictiveLookup()
     }
 
     /** 直前の1文字に小/゛を適用 */
@@ -72,7 +74,12 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
             }
             _composing.isNotEmpty() -> {
                 _composing.deleteCharAt(_composing.length - 1)
-                if (_composing.isEmpty()) _state = InputState.IDLE
+                if (_composing.isEmpty()) {
+                    _state = InputState.IDLE
+                    _candidates = emptyList()
+                } else {
+                    triggerPredictiveLookup()
+                }
                 notifyChanged()
                 true
             }
@@ -134,6 +141,18 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
         _candidates = emptyList()
         _selectedIndex = 0
         notifyChanged()
+    }
+
+    private fun triggerPredictiveLookup() {
+        val capturedReading = _composing.toString()
+        scope.launch {
+            dictionary.ensureLoaded()
+            if (_state == InputState.COMPOSING && _composing.toString() == capturedReading) {
+                val fromDict = dictionary.lookup(capturedReading)
+                _candidates = buildCandidateList(capturedReading, fromDict)
+                notifyChanged()
+            }
+        }
     }
 
     private fun buildCandidateList(reading: String, dictResults: List<String>): List<String> {

@@ -18,11 +18,15 @@ class NumberKeyboardView @JvmOverloads constructor(
     var keyHeightDp: Int = 56
         set(value) { field = value; requestLayout() }
 
+    var widthScale: Int = 100
+        set(value) { field = value; requestLayout() }
+
     private val ROWS = 4
     private val COLS = 5
     private val gap = 3f
     private var kw = 0f
     private var kh = 0f
+    private var leftPad = 0f
 
     // Layout matches image 2: left col = func, cols 1-3 = numpad, right col = func
     private val keys = listOf(
@@ -81,12 +85,14 @@ class NumberKeyboardView @JvmOverloads constructor(
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val w = MeasureSpec.getSize(widthMeasureSpec)
         kh = keyHeightDp * resources.displayMetrics.density
-        kw = (w - gap * (COLS + 1)) / COLS
+        val scaledW = w * widthScale / 100f
+        leftPad = (w - scaledW) / 2f
+        kw = (scaledW - gap * (COLS + 1)) / COLS
         val totalH = (ROWS * kh + (ROWS + 1) * gap).toInt()
         setMeasuredDimension(w, totalH)
     }
 
-    private fun keyLeft(col: Int) = gap + col * (kw + gap)
+    private fun keyLeft(col: Int) = leftPad + gap + col * (kw + gap)
     private fun keyTop(row: Int) = gap + row * (kh + gap)
 
     private fun isSpecialBg(row: Int, col: Int): Boolean {

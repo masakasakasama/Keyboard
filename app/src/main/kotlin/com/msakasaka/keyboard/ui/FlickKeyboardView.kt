@@ -38,6 +38,9 @@ class FlickKeyboardView @JvmOverloads constructor(
     var keyHeightDp: Int = 56
         set(value) { field = value; requestLayout() }
 
+    var widthScale: Int = 100
+        set(value) { field = value; requestLayout() }
+
     private val TOTAL_COLS = 5
     private val CHAR_ROWS = 4
     private val gap = 3f
@@ -45,6 +48,8 @@ class FlickKeyboardView @JvmOverloads constructor(
     private var kh = 0f
     private var numStripH = 0f
     private var numCellW = 0f
+    private var leftPad = 0f
+    private var scaledW = 0f
 
     // Middle columns (1-3): character keys
     private val charKeys = listOf(
@@ -102,14 +107,16 @@ class FlickKeyboardView @JvmOverloads constructor(
         val w = MeasureSpec.getSize(widthMeasureSpec)
         kh = keyHeightDp * resources.displayMetrics.density
         numStripH = kh * 0.55f
-        kw = (w - gap * (TOTAL_COLS + 1)) / TOTAL_COLS
-        numCellW = w / 10f
+        scaledW = w * widthScale / 100f
+        leftPad = (w - scaledW) / 2f
+        kw = (scaledW - gap * (TOTAL_COLS + 1)) / TOTAL_COLS
+        numCellW = scaledW / 10f
         val totalH = (numStripH + gap * (CHAR_ROWS + 1) + CHAR_ROWS * kh).toInt()
         setMeasuredDimension(w, totalH)
     }
 
-    private fun stripCellLeft(i: Int) = i * numCellW
-    private fun colLeft(col: Int) = gap + col * (kw + gap)
+    private fun stripCellLeft(i: Int) = leftPad + i * numCellW
+    private fun colLeft(col: Int) = leftPad + gap + col * (kw + gap)
     private fun rowTop(row: Int) = numStripH + gap + row * (kh + gap)
 
     override fun onDraw(canvas: Canvas) {
@@ -197,7 +204,7 @@ class FlickKeyboardView @JvmOverloads constructor(
         flickCommitted = false
         if (y < numStripH) {
             pressedRow = -1
-            pressedCol = (x / numCellW).toInt().coerceIn(0, 9)
+            pressedCol = ((x - leftPad) / numCellW).toInt().coerceIn(0, 9)
         } else {
             val r = rowAt(y)
             val c = colAt(x)

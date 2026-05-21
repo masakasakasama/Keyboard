@@ -23,6 +23,9 @@ class QwertyKeyboardView @JvmOverloads constructor(
     var keyHeightDp: Int = 56
         set(value) { field = value; requestLayout() }
 
+    var widthScale: Int = 100
+        set(value) { field = value; requestLayout() }
+
     private var isShifted = false
 
     private val rows = listOf(
@@ -76,17 +79,18 @@ class QwertyKeyboardView @JvmOverloads constructor(
 
     private fun computeRects(totalW: Int) {
         keyRects.clear()
+        val scaledW = (totalW * widthScale / 100f).toInt()
+        val leftPad = (totalW - scaledW) / 2f
         rows.forEachIndexed { rowIdx, row ->
             val y = gap + rowIdx * (kh + gap)
             val rects = mutableListOf<RectF>()
 
-            // Row 3 has special weights
             if (rowIdx == 3) {
                 val weights = listOf(1.5f, 1.5f, 0.8f, 3f, 0.8f, 1.5f)
                 val totalWeight = weights.sum()
-                val usable = totalW - gap * (weights.size + 1)
+                val usable = scaledW - gap * (weights.size + 1)
                 val unit = usable / totalWeight
-                var x = gap
+                var x = leftPad + gap
                 weights.forEach { w ->
                     val kw = unit * w
                     rects.add(RectF(x, y, x + kw, y + kh))
@@ -94,8 +98,8 @@ class QwertyKeyboardView @JvmOverloads constructor(
                 }
             } else {
                 val cols = row.size
-                val kw = (totalW - gap * (cols + 1)) / cols
-                var x = gap
+                val kw = (scaledW - gap * (cols + 1)) / cols
+                var x = leftPad + gap
                 repeat(cols) {
                     rects.add(RectF(x, y, x + kw, y + kh))
                     x += kw + gap

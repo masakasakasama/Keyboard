@@ -10,6 +10,8 @@ data class FlickChars(
 
 object FlickCharTable {
 
+    // FlickChars(center, up=+2, right=+3, down=+4, left=+1)
+    // Standard Japanese flick: left=+1(い), up=+2(う), right=+3(え), down=+4(お)
     val JA_KEYS: Map<String, FlickChars> = mapOf(
         "あ" to FlickChars("あ", "う", "え", "お", "い"),
         "か" to FlickChars("か", "く", "け", "こ", "き"),
