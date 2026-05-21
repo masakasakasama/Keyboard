@@ -63,6 +63,7 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
             _composing.deleteCharAt(_composing.length - 1)
             _composing.append(modified)
             notifyChanged()
+            triggerPredictiveLookup()
         }
     }
 
