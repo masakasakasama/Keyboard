@@ -92,7 +92,8 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
         scope.launch {
             dictionary.ensureLoaded()
             val reading = _composing.toString()
-            val fromDict = dictionary.lookup(reading)
+            val lookupKey = if (mode == InputMode.ENGLISH) reading.lowercase() else reading
+            val fromDict = dictionary.lookup(lookupKey)
             _candidates = buildCandidateList(reading, fromDict)
             _selectedIndex = 0
             _state = InputState.CONVERTING
@@ -150,7 +151,9 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
         scope.launch {
             dictionary.ensureLoaded()
             if (_state == InputState.COMPOSING && _composing.toString() == capturedReading) {
-                val fromDict = dictionary.lookup(capturedReading)
+                // 英語モードでは大文字小文字を無視して検索
+                val lookupKey = if (mode == InputMode.ENGLISH) capturedReading.lowercase() else capturedReading
+                val fromDict = dictionary.lookup(lookupKey)
                 _candidates = buildCandidateList(capturedReading, fromDict)
                 notifyChanged()
             }
@@ -159,12 +162,19 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
 
     private fun buildCandidateList(reading: String, dictResults: List<String>): List<String> {
         val result = mutableListOf<String>()
-        result.addAll(dictResults)
+        // 英語モードで先頭が大文字なら、辞書から取った候補も先頭大文字に
+        val applyCap = mode == InputMode.ENGLISH && reading.isNotEmpty() && reading[0].isUpperCase()
+        val adapted = if (applyCap) {
+            dictResults.map { if (it.isNotEmpty() && it[0].isLowerCase()) it.replaceFirstChar { c -> c.uppercaseChar() } else it }
+        } else dictResults
+        result.addAll(adapted)
         if (!result.contains(reading)) result.add(reading)
-        // カタカナ変換を追加
-        val katakana = toKatakana(reading)
-        if (katakana != reading && !result.contains(katakana)) result.add(katakana)
-        return result
+        // カタカナ変換を追加（日本語モードのみ）
+        if (mode == InputMode.JAPANESE) {
+            val katakana = toKatakana(reading)
+            if (katakana != reading && !result.contains(katakana)) result.add(katakana)
+        }
+        return result.distinct()
     }
 
     private fun toKatakana(hiragana: String): String {

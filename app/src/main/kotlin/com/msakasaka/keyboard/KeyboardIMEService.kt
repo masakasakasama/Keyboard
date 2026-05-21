@@ -118,7 +118,13 @@ class KeyboardIMEService : InputMethodService() {
         if (engine.mode == InputMode.ENGLISH) {
             if (ch.matches(Regex("[a-zA-Z]"))) {
                 // アルファベットはコンポジションに溜めて予測変換
-                engine.appendChar(ch.lowercase())
+                // 単語先頭かつ文の先頭なら自動的に大文字化（Shift入力済みなら維持）
+                val input = if (engine.composing.isEmpty() && ch[0].isLowerCase() && shouldAutoCapitalize()) {
+                    ch.uppercase()
+                } else {
+                    ch
+                }
+                engine.appendChar(input)
             } else {
                 // 記号・数字はコンポジション確定→記号入力
                 commitEnglishComposing()
@@ -127,6 +133,44 @@ class KeyboardIMEService : InputMethodService() {
             return
         }
         engine.appendChar(ch)
+    }
+
+    /** カーソル直前の文脈を見て、次の英字を大文字にすべきか判定 */
+    private fun shouldAutoCapitalize(): Boolean {
+        val ic = currentInputConnection ?: return false
+        val before = ic.getTextBeforeCursor(64, 0)?.toString() ?: return true
+        val trimmed = before.trimEnd { it == ' ' || it == '\t' }
+        if (trimmed.isEmpty()) return true  // 文書の先頭
+        val last = trimmed.last()
+        return last == '.' || last == '!' || last == '?' || last == '\n'
+    }
+
+    /** 英単語に対する標準的な自動補正（"i" → "I" など） */
+    private fun autoCorrectEnglish(word: String): String {
+        val lowered = word.lowercase()
+        // 単独の "i" → "I"
+        if (lowered == "i") return "I"
+        // 標準的な縮約形補正（モバイルキーボード標準動作）
+        val contractions = mapOf(
+            "im" to "I'm", "ive" to "I've", "ill" to "I'll", "id" to "I'd",
+            "isnt" to "isn't", "wasnt" to "wasn't", "arent" to "aren't",
+            "werent" to "weren't", "dont" to "don't", "doesnt" to "doesn't",
+            "didnt" to "didn't", "cant" to "can't", "couldnt" to "couldn't",
+            "wont" to "won't", "wouldnt" to "wouldn't", "shouldnt" to "shouldn't",
+            "hasnt" to "hasn't", "havent" to "haven't", "hadnt" to "hadn't",
+            "youre" to "you're", "youve" to "you've", "youll" to "you'll",
+            "youd" to "you'd", "theyre" to "they're", "theyve" to "they've",
+            "theyll" to "they'll", "theyd" to "they'd",
+            "thats" to "that's", "whats" to "what's",
+            "shes" to "she's", "hes" to "he's"
+        )
+        contractions[lowered]?.let { corrected ->
+            // 元の単語が大文字始まりだったら補正後も大文字始まりに（"Im" → "I'm" は I なのでそのまま）
+            return if (word.isNotEmpty() && word[0].isUpperCase() && !corrected.startsWith("I"))
+                corrected.replaceFirstChar { it.uppercaseChar() }
+            else corrected
+        }
+        return word
     }
 
     private fun handleBackspace() {
@@ -230,8 +274,9 @@ class KeyboardIMEService : InputMethodService() {
     /** 英語コンポジション中のテキストを確定する */
     private fun commitEnglishComposing() {
         if (engine.composing.isNotEmpty()) {
-            val text = engine.commitComposing()
-            currentInputConnection?.commitText(text, 1)
+            val raw = engine.commitComposing()
+            val corrected = autoCorrectEnglish(raw)
+            currentInputConnection?.commitText(corrected, 1)
         }
     }
 
