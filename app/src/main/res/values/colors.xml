@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="keyboard_bg">#FF1E1E1E</color>
+    <color name="key_normal_bg">#FF3A3A3A</color>
+    <color name="key_special_bg">#FF2A2A2A</color>
+    <color name="key_pressed_bg">#FF5A5A5A</color>
+    <color name="key_text_primary">#FFFFFFFF</color>
+    <color name="key_text_secondary">#FFB0B0B0</color>
+    <color name="candidate_bg">#FF262626</color>
+    <color name="candidate_selected_bg">#FF0A84FF</color>
+    <color name="candidate_text">#FFFFFFFF</color>
+    <color name="candidate_divider">#FF444444</color>
+    <color name="clipboard_panel_bg">#FF1A1A1A</color>
+    <color name="clipboard_image_border">#FF555555</color>
+    <color name="colorPrimary">#FF0A84FF</color>
+    <color name="colorPrimaryDark">#FF0060CC</color>
+    <color name="colorAccent">#FF0A84FF</color>
+</resources>

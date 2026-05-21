@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MyKeyboard</string>
+    <string name="ime_name">MyKeyboard</string>
+    <string name="subtype_ja">日本語</string>
+    <string name="subtype_en">English</string>
+    <string name="settings_title">キーボード設定</string>
+    <string name="settings_keyboard_height">キーボードの高さ</string>
+    <string name="settings_keyboard_width">キーボードの幅</string>
+    <string name="settings_height_summary">キーの縦幅を調整します</string>
+    <string name="settings_width_summary">キーの横幅を調整します</string>
+    <string name="pref_key_height">key_height_dp</string>
+    <string name="pref_key_width_scale">key_width_scale</string>
+    <string name="enable_keyboard_instructions">設定方法:\n1. 設定 → 一般管理 → キーボード\n2. 「画面上のキーボード」→ 「キーボードを管理」\n3. MyKeyboard をオンにする\n4. デフォルトキーボードに設定する</string>
+    <string name="btn_open_settings">システム設定を開く</string>
+</resources>

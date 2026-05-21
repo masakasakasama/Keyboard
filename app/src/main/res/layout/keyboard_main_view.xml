@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<merge xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <!-- 候補ストリップ -->
+    <com.msakasaka.keyboard.ui.CandidateView
+        android:id="@+id/candidate_view"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:background="@color/candidate_bg" />
+
+    <!-- キーボード本体コンテナ -->
+    <FrameLayout
+        android:id="@+id/keyboard_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/keyboard_bg">
+
+        <!-- 日本語フリックキーボード -->
+        <com.msakasaka.keyboard.ui.FlickKeyboardView
+            android:id="@+id/flick_keyboard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:visibility="visible" />
+
+        <!-- 英語QWERTYキーボード -->
+        <com.msakasaka.keyboard.ui.QwertyKeyboardView
+            android:id="@+id/qwerty_keyboard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:visibility="gone" />
+
+        <!-- クリップボードパネル（キーボードの上に重ねて表示） -->
+        <com.msakasaka.keyboard.ui.ClipboardPanel
+            android:id="@+id/clipboard_panel"
+            android:layout_width="match_parent"
+            android:layout_height="200dp"
+            android:visibility="gone" />
+
+    </FrameLayout>
+
+</merge>

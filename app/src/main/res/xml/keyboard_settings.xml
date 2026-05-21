@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <SeekBarPreference
+        android:key="key_height_dp"
+        android:title="@string/settings_keyboard_height"
+        android:summary="@string/settings_height_summary"
+        android:defaultValue="56"
+        android:min="44"
+        android:max="80" />
+
+    <SeekBarPreference
+        android:key="key_width_scale"
+        android:title="@string/settings_keyboard_width"
+        android:summary="@string/settings_width_summary"
+        android:defaultValue="100"
+        android:min="70"
+        android:max="100" />
+
+</PreferenceScreen>
