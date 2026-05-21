@@ -228,9 +228,4 @@ class KeyboardIMEService : InputMethodService() {
         }
     }
 
-    // ────────────── 全角記号 ──────────────
-
-    override fun onText(text: CharSequence?) {
-        currentInputConnection?.commitText(text, 1)
-    }
 }
