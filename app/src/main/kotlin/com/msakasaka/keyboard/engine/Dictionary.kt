@@ -66,27 +66,30 @@ class Dictionary(private val context: Context) {
             .sortedBy { it.first }
     }
 
-    /** ひらがな読みが reading で始まるエントリを返す（最大 limit 件、頻度順） */
-    fun lookup(reading: String): List<String> {
+    /** ひらがな読みが reading で始まるエントリを返す。頻度順、最大 limit 件 */
+    fun lookup(reading: String, limit: Int = 40): List<String> {
         if (reading.isEmpty()) return emptyList()
 
-        val results = mutableListOf<Pair<String, Int>>()
+        // 完全一致は最優先（基本周波数 +1000 ブースト）
+        val exactMatches = index[reading]?.map { Pair(it.first, it.second + 1000) } ?: emptyList()
 
-        // 完全一致を優先
-        index[reading]?.let { results.addAll(it) }
-
-        // 前方一致（読みが長い単語を拾う）
-        if (reading.length >= 2) {
-            for ((key, pairs) in index) {
-                if (key != reading && key.startsWith(reading)) {
-                    results.addAll(pairs)
+        // 前方一致：1文字でも有効。長い単語の頻度は短さで割り引く
+        val prefixMatches = mutableListOf<Pair<String, Int>>()
+        for ((key, pairs) in index) {
+            if (key != reading && key.startsWith(reading)) {
+                // 同じ短い読みのほうが優先されるよう、長さ差で減点
+                val penalty = (key.length - reading.length) * 50
+                for ((surface, freq) in pairs) {
+                    prefixMatches.add(Pair(surface, freq - penalty))
                 }
             }
         }
 
-        return results.sortedByDescending { it.second }
+        return (exactMatches + prefixMatches)
+            .sortedByDescending { it.second }
             .map { it.first }
             .distinct()
+            .take(limit)
     }
 
     private fun add(reading: String, surface: String, freq: Int) {
