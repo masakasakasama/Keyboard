@@ -16,10 +16,12 @@ import com.msakasaka.keyboard.engine.JapaneseInputEngine
 import com.msakasaka.keyboard.settings.KeyboardSettings
 import com.msakasaka.keyboard.ui.KeyboardListener
 import com.msakasaka.keyboard.ui.MainKeyboardView
+import com.msakasaka.keyboard.util.AIPrediction
 import com.msakasaka.keyboard.util.AutoUpdater
 import com.msakasaka.keyboard.util.ClipboardHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -33,6 +35,8 @@ class KeyboardIMEService : InputMethodService() {
     private lateinit var clipboardHelper: ClipboardHelper
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var aiPredictionJob: Job? = null
+    private var isShowingAiPredictions = false
 
     private val settingsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
@@ -72,6 +76,8 @@ class KeyboardIMEService : InputMethodService() {
         engine.onStateChanged = { snapshot ->
             when (snapshot.state) {
                 InputState.COMPOSING -> {
+                    isShowingAiPredictions = false
+                    aiPredictionJob?.cancel()
                     currentInputConnection?.setComposingText(snapshot.composing, 1)
                     mainView.candidateView.candidates = snapshot.candidates
                 }
@@ -81,15 +87,24 @@ class KeyboardIMEService : InputMethodService() {
                     mainView.candidateView.selectedIndex = snapshot.selectedCandidateIndex
                 }
                 InputState.IDLE -> {
-                    mainView.candidateView.candidates = emptyList()
+                    if (!isShowingAiPredictions) {
+                        mainView.candidateView.candidates = emptyList()
+                    }
                 }
             }
         }
 
         // commitText() replaces any current composing region — no finishComposingText() needed
         mainView.candidateView.onCandidateClick = { index ->
-            val selected = engine.selectCandidate(index)
-            currentInputConnection?.commitText(selected, 1)
+            if (engine.state == InputState.IDLE && isShowingAiPredictions) {
+                val prediction = mainView.candidateView.candidates.getOrNull(index) ?: return@onCandidateClick
+                isShowingAiPredictions = false
+                currentInputConnection?.commitText("$prediction ", 1)
+                triggerAiPrediction()
+            } else {
+                val selected = engine.selectCandidate(index)
+                currentInputConnection?.commitText(selected, 1)
+            }
         }
 
         val keyListener = object : KeyboardListener {
@@ -212,7 +227,7 @@ class KeyboardIMEService : InputMethodService() {
                 currentInputConnection?.commitText(selected, 1)
             }
             InputState.IDLE -> {
-                sendDefaultEditorAction(true)
+                currentInputConnection?.commitText("\n", 1)
             }
         }
     }
@@ -294,6 +309,25 @@ class KeyboardIMEService : InputMethodService() {
             val raw = engine.commitComposing()
             val corrected = autoCorrectEnglish(raw)
             currentInputConnection?.commitText(corrected, 1)
+            triggerAiPrediction()
+        }
+    }
+
+    private fun triggerAiPrediction() {
+        if (engine.mode != InputMode.ENGLISH) return
+        val key = settings.claudeApiKey
+        if (key.isBlank()) return
+        val context = currentInputConnection?.getTextBeforeCursor(200, 0)?.toString() ?: return
+        if (context.isBlank()) return
+        aiPredictionJob?.cancel()
+        aiPredictionJob = serviceScope.launch {
+            val predictions = AIPrediction(key).predict(context)
+            if (predictions.isNotEmpty() && engine.state == InputState.IDLE) {
+                mainView.post {
+                    isShowingAiPredictions = true
+                    mainView.candidateView.candidates = predictions
+                }
+            }
         }
     }
 

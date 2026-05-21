@@ -6,7 +6,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.URL
 
-data class UpdateInfo(val versionCode: Int, val downloadUrl: String, val tagName: String)
+data class UpdateInfo(val versionCode: Int, val downloadUrl: String, val tagName: String, val releaseBody: String = "")
 
 class UpdateChecker(private val context: Context) {
 
@@ -38,7 +38,8 @@ class UpdateChecker(private val context: Context) {
             }
             if (downloadUrl.isEmpty()) return@withContext null
 
-            UpdateInfo(remoteVc, downloadUrl, tag)
+            val body = if (json.has("body")) json.getString("body") else ""
+            UpdateInfo(remoteVc, downloadUrl, tag, body)
         } catch (e: Exception) {
             null
         }

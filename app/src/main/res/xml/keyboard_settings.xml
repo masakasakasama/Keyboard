@@ -22,4 +22,11 @@
         android:title="ユーザー辞書"
         android:summary="自分だけの単語を登録・管理" />
 
+    <EditTextPreference
+        android:key="claude_api_key"
+        android:title="Claude API キー"
+        android:summary="英語AI予測変換に使用（空の場合は無効）"
+        android:inputType="textPassword"
+        android:useSimpleSummaryProvider="false" />
+
 </PreferenceScreen>

@@ -17,6 +17,11 @@ class KeyboardSettings(context: Context) {
         get() = prefs.getInt("key_width_scale", 100)
         set(value) = prefs.edit().putInt("key_width_scale", value).apply()
 
+    /** Claude API key for AI prediction */
+    var claudeApiKey: String
+        get() = prefs.getString("claude_api_key", "") ?: ""
+        set(value) = prefs.edit().putString("claude_api_key", value).apply()
+
     fun registerListener(listener: android.content.SharedPreferences.OnSharedPreferenceChangeListener) {
         prefs.registerOnSharedPreferenceChangeListener(listener)
     }

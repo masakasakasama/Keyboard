@@ -59,23 +59,40 @@
             android:layout_marginTop="8dp"
             android:padding="12dp"
             android:background="@drawable/rounded_card_bg"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/update_text"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textSize="14sp"
+                    android:textColor="@color/colorPrimary" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_update"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="更新" />
+            </LinearLayout>
 
             <com.google.android.material.textview.MaterialTextView
-                android:id="@+id/update_text"
-                android:layout_width="0dp"
+                android:id="@+id/release_notes_text"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:textSize="14sp"
-                android:textColor="@color/colorPrimary" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btn_update"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="更新" />
+                android:layout_marginTop="8dp"
+                android:textSize="12sp"
+                android:textColor="?android:textColorSecondary"
+                android:maxLines="8"
+                android:ellipsize="end"
+                android:visibility="gone" />
         </LinearLayout>
 
         <!-- キーボード設定 -->

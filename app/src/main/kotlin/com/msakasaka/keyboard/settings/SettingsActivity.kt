@@ -99,6 +99,11 @@ class SettingsActivity : AppCompatActivity() {
                 updateBar.visibility = View.VISIBLE
                 updateText.text = "新しいバージョン ${info.tagName} があります"
                 btnUpdate.setOnClickListener { downloadAndInstall(info.downloadUrl) }
+                if (info.releaseBody.isNotBlank()) {
+                    val notesView = findViewById<MaterialTextView>(R.id.release_notes_text)
+                    notesView.text = info.releaseBody.trim()
+                    notesView.visibility = View.VISIBLE
+                }
             }
         }
     }
