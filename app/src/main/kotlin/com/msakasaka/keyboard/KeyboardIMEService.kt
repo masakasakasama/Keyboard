@@ -216,14 +216,14 @@ class KeyboardIMEService : InputMethodService() {
             }
             engine.reset()
         }
-        engine.mode = InputMode.ENGLISH
+        engine.setMode(InputMode.ENGLISH)
         mainView.showNumberKeyboard()
         mainView.candidateView.candidates = emptyList()
     }
 
     private fun handleExitNumberMode() {
         val prevMode = mainView.exitNumberKeyboard()
-        engine.mode = prevMode
+        engine.setMode(prevMode)
         mainView.currentMode = prevMode
     }
 

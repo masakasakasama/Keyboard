@@ -39,6 +39,11 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
         reset()
     }
 
+    fun setMode(newMode: InputMode) {
+        mode = newMode
+        reset()
+    }
+
     fun appendChar(char: String) {
         if (_state == InputState.CONVERTING) cancelConversion()
         _composing.append(char)
