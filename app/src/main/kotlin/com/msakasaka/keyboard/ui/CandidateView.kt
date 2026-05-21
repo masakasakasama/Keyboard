@@ -18,7 +18,7 @@ class CandidateView @JvmOverloads constructor(
         set(value) {
             field = value
             candidateRects.clear()
-            canvasScrollX = 0
+            canvasScrollX = 0f
             invalidate()
         }
 
