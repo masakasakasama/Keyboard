@@ -48,7 +48,7 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
         if (_state == InputState.CONVERTING) cancelConversion()
         _composing.append(char)
         _state = InputState.COMPOSING
-        _candidates = emptyList()
+        // 候補をクリアしない — 非同期lookupが完了するまで前の候補を表示し続ける
         notifyChanged()
         triggerPredictiveLookup()
     }

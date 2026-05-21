@@ -17,10 +17,11 @@ class ClipboardHelper(private val context: Context) {
         for (i in 0 until clip.itemCount) {
             val item = clip.getItemAt(i)
             val uri = item.uri ?: continue
-            val mime = clip.description.getMimeType(0) ?: continue
-            if (mime.startsWith("image/")) {
-                results.add(ClipboardImage(uri, mime))
-            }
+            // すべての MIME タイプを確認（0番目だけでは画像を見逃す場合がある）
+            val mime = (0 until clip.description.mimeTypeCount)
+                .mapNotNull { clip.description.getMimeType(it) }
+                .firstOrNull { it.startsWith("image/") } ?: continue
+            results.add(ClipboardImage(uri, mime))
         }
         return results
     }
@@ -29,8 +30,9 @@ class ClipboardHelper(private val context: Context) {
         val clip = manager.primaryClip ?: return false
         for (i in 0 until clip.itemCount) {
             val uri = clip.getItemAt(i).uri ?: continue
-            val mime = clip.description.getMimeType(0) ?: continue
-            if (mime.startsWith("image/")) return true
+            val has = (0 until clip.description.mimeTypeCount)
+                .any { clip.description.getMimeType(it)?.startsWith("image/") == true }
+            if (has) return true
         }
         return false
     }

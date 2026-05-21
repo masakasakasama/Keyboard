@@ -74,6 +74,8 @@ class MainKeyboardView @JvmOverloads constructor(
     fun showClipboard(images: List<ClipboardImage>) {
         clipboardPanel.images = images
         if (!isClipboardShown) {
+            // キーボードを INVISIBLE にしてサイズを保持しつつ非表示
+            activeKeyboardView().visibility = View.INVISIBLE
             clipboardPanel.visibility = View.VISIBLE
             isClipboardShown = true
         }
@@ -82,11 +84,18 @@ class MainKeyboardView @JvmOverloads constructor(
     fun hideClipboard() {
         if (isClipboardShown) {
             clipboardPanel.visibility = View.GONE
+            activeKeyboardView().visibility = View.VISIBLE
             isClipboardShown = false
         }
     }
 
     fun toggleClipboard(images: List<ClipboardImage>) {
         if (isClipboardShown) hideClipboard() else showClipboard(images)
+    }
+
+    private fun activeKeyboardView(): View = when {
+        isNumberMode -> numberKeyboard
+        currentMode == InputMode.ENGLISH -> qwertyKeyboard
+        else -> flickKeyboard
     }
 }

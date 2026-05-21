@@ -44,6 +44,15 @@
             </intent-filter>
         </activity>
 
+        <!-- アップデート自動インストール用レシーバー -->
+        <receiver
+            android:name=".util.DownloadCompleteReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+            </intent-filter>
+        </receiver>
+
         <!-- APK インストール用 FileProvider -->
         <provider
             android:name="androidx.core.content.FileProvider"

@@ -16,7 +16,13 @@ import com.msakasaka.keyboard.engine.JapaneseInputEngine
 import com.msakasaka.keyboard.settings.KeyboardSettings
 import com.msakasaka.keyboard.ui.KeyboardListener
 import com.msakasaka.keyboard.ui.MainKeyboardView
+import com.msakasaka.keyboard.util.AutoUpdater
 import com.msakasaka.keyboard.util.ClipboardHelper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 class KeyboardIMEService : InputMethodService() {
 
@@ -25,6 +31,8 @@ class KeyboardIMEService : InputMethodService() {
     private lateinit var dictionary: Dictionary
     private lateinit var settings: KeyboardSettings
     private lateinit var clipboardHelper: ClipboardHelper
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val settingsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
@@ -40,9 +48,18 @@ class KeyboardIMEService : InputMethodService() {
         settings = KeyboardSettings(this)
         clipboardHelper = ClipboardHelper(this)
         settings.registerListener(settingsListener)
+
+        // 辞書を事前ロード（最初のキー入力で候補が即表示されるよう）
+        serviceScope.launch { dictionary.ensureLoaded() }
+
+        // 自動アップデート確認（1日1回）
+        serviceScope.launch {
+            try { AutoUpdater(this@KeyboardIMEService).checkAndDownloadIfNeeded() } catch (_: Exception) {}
+        }
     }
 
     override fun onDestroy() {
+        serviceScope.cancel()
         settings.unregisterListener(settingsListener)
         super.onDestroy()
     }

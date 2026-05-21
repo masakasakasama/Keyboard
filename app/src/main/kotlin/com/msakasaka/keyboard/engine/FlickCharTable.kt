@@ -20,7 +20,7 @@ object FlickCharTable {
         "な" to FlickChars("な", "ぬ", "ね", "の", "に"),
         "は" to FlickChars("は", "ふ", "へ", "ほ", "ひ"),
         "ま" to FlickChars("ま", "む", "め", "も", "み"),
-        "や" to FlickChars("や", "よ", "？", "！", "ゆ"),
+        "や" to FlickChars("や", "ゆ", "", "よ", ""),
         "ら" to FlickChars("ら", "る", "れ", "ろ", "り"),
         "わ" to FlickChars("わ", "ん", "ー", "〜", "を"),
         "。" to FlickChars("。", "？", "！", "・", "、")
@@ -52,7 +52,8 @@ object FlickCharTable {
 
     /** 最後の1文字に対して小/゛を適用。変化した文字を返す（変化なしはnull） */
     fun applyModifier(char: String): String? {
-        return DAKUTEN_MAP[char] ?: KOGAKI_MAP[char]
+        // 小文字優先（つ→っ が取れるよう KOGAKI を先に検索）
+        return KOGAKI_MAP[char] ?: DAKUTEN_MAP[char]
     }
 
     fun hasDakuten(char: String): Boolean = DAKUTEN_MAP.containsKey(char)
