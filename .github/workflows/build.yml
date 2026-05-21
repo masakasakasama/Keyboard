@@ -3,10 +3,10 @@ name: Build APK
 on:
   push:
     branches: ['claude/android-keyboard-app-tHMVN', 'main']
-  workflow_dispatch:   # スマホのGitHubサイトから手動実行できる
+  workflow_dispatch:
 
 permissions:
-  contents: write      # Releases 作成に必要
+  contents: write
 
 jobs:
   build:
@@ -14,34 +14,54 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 全コミット履歴 (versionCode 計算に必要)
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # gradle-wrapper.jar なしで動かすため gradle-version を直接指定
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.6'
+      # gradle-wrapper.jar 不要で Gradle 8.6 を直接インストール
+      - name: Install Gradle 8.6
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.6-bin.zip -O /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /opt/gradle
+          echo "/opt/gradle/gradle-8.6/bin" >> "$GITHUB_PATH"
+
+      # GitHub Actions には Android SDK が入っているが
+      # local.properties がないと Gradle が SDK 場所を見つけられない → これが失敗の原因
+      - name: Create local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      # git コミット数を versionCode に自動設定
+      - name: Set versionCode from commit count
+        run: |
+          VC=$(git rev-list --count HEAD)
+          echo "versionCode = $VC"
+          sed -i "s/versionCode = [0-9]*/versionCode = $VC/" app/build.gradle.kts
 
       - name: Build Debug APK
         run: gradle :app:assembleDebug
 
-      # Releases に APK を公開（スマホブラウザから直接ダウンロード可）
-      - name: Publish to GitHub Releases
+      # v{versionCode} タグで Release 作成
+      # アプリ内アップデートチェックはこのタグ番号と比較する
+      - name: Publish Release
         run: |
-          TAG="build-$(date +'%Y%m%d-%H%M')"
+          VC=$(git rev-list --count HEAD)
+          TAG="v$VC"
+          NOTES="versionCode=$VC
+
+          ## インストール / アップデート手順
+          1. **MyKeyboard.apk** をタップ → ダウンロード
+          2. タップしてインストール（初回のみ「提供元不明アプリ」を許可）
+          3. 設定 → 一般管理 → キーボード → MyKeyboard を有効化
+          4. デフォルトキーボードに設定"
+
           gh release create "$TAG" \
-            app/build/outputs/apk/debug/app-debug.apk#MyKeyboard.apk \
+            "app/build/outputs/apk/debug/app-debug.apk#MyKeyboard.apk" \
             --title "MyKeyboard $TAG" \
-            --notes "## インストール手順
-          1. 下の **MyKeyboard.apk** をタップしてダウンロード
-          2. ダウンロード後にタップしてインストール（「提供元不明のアプリ」を許可）
-          3. 設定 → 一般管理 → キーボード → 画面上のキーボード → MyKeyboard を有効化
-          4. デフォルトキーボードに設定" \
+            --notes "$NOTES" \
             --latest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
