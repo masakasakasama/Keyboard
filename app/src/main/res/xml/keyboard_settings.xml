@@ -25,8 +25,7 @@
     <EditTextPreference
         android:key="groq_api_key"
         android:title="Groq API キー（無料）"
-        android:summary="英語AI予測変換に使用。groq.com で無料取得"
-        android:inputType="textPassword"
-        android:useSimpleSummaryProvider="false" />
+        android:summary="日本語・英語AI予測変換に使用。groq.com で無料取得"
+        android:inputType="textPassword" />
 
 </PreferenceScreen>

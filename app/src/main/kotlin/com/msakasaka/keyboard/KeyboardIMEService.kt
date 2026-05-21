@@ -104,6 +104,7 @@ class KeyboardIMEService : InputMethodService() {
             } else {
                 val selected = engine.selectCandidate(index)
                 currentInputConnection?.commitText(selected, 1)
+                triggerAiPrediction()
             }
         }
 
@@ -225,6 +226,7 @@ class KeyboardIMEService : InputMethodService() {
             InputState.CONVERTING -> {
                 val selected = engine.selectCandidate(engine.selectedIndex)
                 currentInputConnection?.commitText(selected, 1)
+                triggerAiPrediction()
             }
             InputState.IDLE -> {
                 currentInputConnection?.commitText("\n", 1)
@@ -314,14 +316,14 @@ class KeyboardIMEService : InputMethodService() {
     }
 
     private fun triggerAiPrediction() {
-        if (engine.mode != InputMode.ENGLISH) return
         val key = settings.groqApiKey
         if (key.isBlank()) return
         val context = currentInputConnection?.getTextBeforeCursor(200, 0)?.toString() ?: return
         if (context.isBlank()) return
         aiPredictionJob?.cancel()
+        val japanese = engine.mode == InputMode.JAPANESE
         aiPredictionJob = serviceScope.launch {
-            val predictions = AIPrediction(key).predict(context)
+            val predictions = AIPrediction(key).predict(context, japanese)
             if (predictions.isNotEmpty() && engine.state == InputState.IDLE) {
                 mainView.post {
                     isShowingAiPredictions = true
