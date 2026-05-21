@@ -31,6 +31,13 @@
             android:layout_height="wrap_content"
             android:visibility="gone" />
 
+        <!-- 数字テンキー -->
+        <com.msakasaka.keyboard.ui.NumberKeyboardView
+            android:id="@+id/number_keyboard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:visibility="gone" />
+
         <!-- クリップボードパネル（キーボードの上に重ねて表示） -->
         <com.msakasaka.keyboard.ui.ClipboardPanel
             android:id="@+id/clipboard_panel"

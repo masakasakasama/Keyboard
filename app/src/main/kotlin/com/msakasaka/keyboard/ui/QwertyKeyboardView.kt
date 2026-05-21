@@ -177,7 +177,7 @@ class QwertyKeyboardView @JvmOverloads constructor(
             "⇧" -> { isShifted = !isShifted; invalidate() }
             "JP" -> listener?.onSwitchMode()
             "SPC" -> listener?.onSpace()
-            "123" -> { /* 数字入力は今後実装 */ }
+            "123" -> listener?.onNumberMode()
             else -> {
                 val out = if (isShifted) key.uppercase() else key
                 listener?.onChar(out)

@@ -12,29 +12,20 @@ import com.msakasaka.keyboard.engine.InputMode
 import kotlin.math.abs
 import kotlin.math.sqrt
 
-// キーボードのアクション通知
 interface KeyboardListener {
     fun onChar(ch: String)
     fun onBackspace()
     fun onEnter()
     fun onSpace()
     fun onConvert()
-    fun onModifier()       // 小/゛
-    fun onSwitchMode()     // JP↔EN
+    fun onModifier()
+    fun onSwitchMode()
+    fun onNumberMode() {}
+    fun onExitNumberMode() {}
     fun onClipboardOpen()
+    fun onCursorLeft() {}
+    fun onCursorRight() {}
 }
-
-private enum class KeyType {
-    CHAR, BACKSPACE, ENTER, SPACE, MODIFIER, SWITCH_MODE, CLIPBOARD
-}
-
-private data class KeyDef(
-    val label: String,
-    val type: KeyType,
-    val charKey: String = "",   // FlickCharTable のキー
-    val row: Int = 0,
-    val col: Int = 0
-)
 
 class FlickKeyboardView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
@@ -44,16 +35,45 @@ class FlickKeyboardView @JvmOverloads constructor(
     var currentMode: InputMode = InputMode.JAPANESE
         set(value) { field = value; invalidate() }
 
-    // Settings から注入される
     var keyHeightDp: Int = 56
         set(value) { field = value; requestLayout() }
 
-    // ────────────── layout constants ──────────────
-    private val COL = 3
-    private val CHAR_ROWS = 4    // あ〜わ行 + 小゛キー
-    private val FUNC_ROW = 1
+    private val TOTAL_COLS = 5
+    private val CHAR_ROWS = 4
+    private val gap = 3f
+    private var kw = 0f
+    private var kh = 0f
+    private var numStripH = 0f
+    private var numCellW = 0f
 
-    // ────────────── paint ──────────────
+    // Middle columns (1-3): character keys
+    private val charKeys = listOf(
+        listOf("あ", "か", "さ"),
+        listOf("た", "な", "は"),
+        listOf("ま", "や", "ら"),
+        listOf("小゛", "わ", "。")
+    )
+
+    // [col0 label, col4 label] for each row
+    private val funcKeys = listOf(
+        listOf("clip", "⌫"),
+        listOf("＜", "＞"),
+        listOf("1&+", "空白"),
+        listOf("abc", "↵")
+    )
+
+    private val numbers = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
+
+    // pressedRow: -2=no press, -1=number strip, 0..3=char rows
+    private var pressedRow = -2
+    private var pressedCol = -1
+    private var touchStartX = 0f
+    private var touchStartY = 0f
+    private var flickCommitted = false
+
+    private val FLICK_THRESHOLD_DP = 20f
+    private val flickThreshold get() = FLICK_THRESHOLD_DP * resources.displayMetrics.density
+
     private val normalBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = ContextCompat.getColor(context, R.color.key_normal_bg)
     }
@@ -78,133 +98,87 @@ class FlickKeyboardView @JvmOverloads constructor(
         strokeWidth = 1f
     }
 
-    // ────────────── key grid ──────────────
-    // row0〜3: char keys, row4: function keys
-    private val charKeys = listOf(
-        listOf("あ", "か", "さ"),
-        listOf("た", "な", "は"),
-        listOf("ま", "や", "ら"),
-        listOf("小゛", "わ", "⌫")
-    )
-
-    // ────────────── touch state ──────────────
-    private var pressedRow = -1
-    private var pressedCol = -1
-    private var touchStartX = 0f
-    private var touchStartY = 0f
-    private var flickCommitted = false
-
-    private var kw = 0f  // key width
-    private var kh = 0f  // key height
-    private val gap = 3f
-
-    private val FLICK_THRESHOLD_DP = 20f
-    private val flickThreshold get() = FLICK_THRESHOLD_DP * resources.displayMetrics.density
-
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val w = MeasureSpec.getSize(widthMeasureSpec)
         kh = keyHeightDp * resources.displayMetrics.density
-        kw = (w - gap * (COL + 1)) / COL
-        val totalH = ((CHAR_ROWS + FUNC_ROW) * kh + (CHAR_ROWS + FUNC_ROW + 1) * gap).toInt()
+        numStripH = kh * 0.55f
+        kw = (w - gap * (TOTAL_COLS + 1)) / TOTAL_COLS
+        numCellW = w / 10f
+        val totalH = (numStripH + gap * (CHAR_ROWS + 1) + CHAR_ROWS * kh).toInt()
         setMeasuredDimension(w, totalH)
     }
 
+    private fun stripCellLeft(i: Int) = i * numCellW
+    private fun colLeft(col: Int) = gap + col * (kw + gap)
+    private fun rowTop(row: Int) = numStripH + gap + row * (kh + gap)
+
     override fun onDraw(canvas: Canvas) {
-        // Draw all keys
+        drawNumberStrip(canvas)
         for (row in 0 until CHAR_ROWS) {
-            for (col in 0 until COL) {
-                drawCharKey(canvas, row, col)
+            for (col in 0 until TOTAL_COLS) {
+                drawKey(canvas, row, col)
             }
         }
-        drawFuncRow(canvas)
     }
 
-    private fun keyLeft(col: Int) = gap + col * (kw + gap)
-    private fun keyTop(row: Int) = gap + row * (kh + gap)
-
-    private fun drawCharKey(canvas: Canvas, row: Int, col: Int) {
-        val label = charKeys[row][col]
-        val x = keyLeft(col)
-        val y = keyTop(row)
-        val isPressed = pressedRow == row && pressedCol == col
-        val isSpecial = label == "⌫" || label == "小゛"
-
-        val bg = when {
-            isPressed -> pressedBg
-            isSpecial -> specialBg
-            else -> normalBg
+    private fun drawNumberStrip(canvas: Canvas) {
+        numbers.forEachIndexed { i, num ->
+            val x = stripCellLeft(i)
+            val isPressed = pressedRow == -1 && pressedCol == i
+            val rect = RectF(x + 1f, 1f, x + numCellW - 1f, numStripH - 1f)
+            canvas.drawRoundRect(rect, 6f, 6f, if (isPressed) pressedBg else specialBg)
+            canvas.drawRoundRect(rect, 6f, 6f, borderPaint)
+            primaryText.textSize = numStripH * 0.48f
+            canvas.drawText(num, x + numCellW / 2f, numStripH * 0.68f, primaryText)
         }
+    }
+
+    private fun getKeyLabel(row: Int, col: Int): String = when (col) {
+        0 -> funcKeys[row][0]
+        4 -> funcKeys[row][1]
+        else -> charKeys[row][col - 1]
+    }
+
+    private fun isSpecialBg(row: Int, col: Int): Boolean {
+        val label = getKeyLabel(row, col)
+        return col == 0 || label in setOf("⌫", "↵", "小゛")
+    }
+
+    private fun drawKey(canvas: Canvas, row: Int, col: Int) {
+        val x = colLeft(col)
+        val y = rowTop(row)
+        val label = getKeyLabel(row, col)
+        val isPressed = pressedRow == row && pressedCol == col
+
+        val bg = if (isPressed) pressedBg else if (isSpecialBg(row, col)) specialBg else normalBg
         val rect = RectF(x, y, x + kw, y + kh)
         canvas.drawRoundRect(rect, 8f, 8f, bg)
         canvas.drawRoundRect(rect, 8f, 8f, borderPaint)
 
-        primaryText.textSize = kh * 0.38f
-        secondaryText.textSize = kh * 0.20f
-
         val cx = x + kw / 2f
         val cy = y + kh / 2f
+        primaryText.textSize = kh * 0.36f
+        secondaryText.textSize = kh * 0.20f
 
-        when (label) {
-            "⌫" -> {
-                primaryText.textSize = kh * 0.35f
-                canvas.drawText("⌫", cx, cy + primaryText.textSize * 0.35f, primaryText)
-            }
-            "小゛" -> {
-                primaryText.textSize = kh * 0.30f
-                canvas.drawText("小/゛", cx, cy + primaryText.textSize * 0.35f, primaryText)
+        when {
+            col == 0 || col == 4 || label == "小゛" -> {
+                primaryText.textSize = when (label) {
+                    "1&+", "abc", "clip" -> kh * 0.26f
+                    "空白" -> kh * 0.28f
+                    else -> kh * 0.34f
+                }
+                val display = if (label == "↵") "確定" else label
+                canvas.drawText(display, cx, cy + primaryText.textSize * 0.35f, primaryText)
             }
             else -> {
-                val flick = FlickCharTable.JA_KEYS[label]
-                // 中央
                 canvas.drawText(label, cx, cy + primaryText.textSize * 0.35f, primaryText)
-                // サブ文字（小さく四隅）
-                flick?.let {
-                    val sub = secondaryText
-                    if (it.up.isNotEmpty())    canvas.drawText(it.up,    cx,          y + kh * 0.22f, sub)
-                    if (it.right.isNotEmpty()) canvas.drawText(it.right, x + kw * 0.82f, cy + sub.textSize * 0.35f, sub)
-                    if (it.down.isNotEmpty())  canvas.drawText(it.down,  cx,          y + kh * 0.88f, sub)
-                    if (it.left.isNotEmpty())  canvas.drawText(it.left,  x + kw * 0.18f, cy + sub.textSize * 0.35f, sub)
+                FlickCharTable.JA_KEYS[label]?.let { f ->
+                    if (f.up.isNotEmpty())    canvas.drawText(f.up,    cx,              y + kh * 0.22f, secondaryText)
+                    if (f.right.isNotEmpty()) canvas.drawText(f.right, x + kw * 0.82f, cy + secondaryText.textSize * 0.35f, secondaryText)
+                    if (f.down.isNotEmpty())  canvas.drawText(f.down,  cx,              y + kh * 0.88f, secondaryText)
+                    if (f.left.isNotEmpty())  canvas.drawText(f.left,  x + kw * 0.18f, cy + secondaryText.textSize * 0.35f, secondaryText)
                 }
             }
-        }
-    }
-
-    private fun drawFuncRow(canvas: Canvas) {
-        val row = CHAR_ROWS
-        val y = keyTop(row)
-
-        // 左: JP/EN切り替え
-        run {
-            val x = keyLeft(0)
-            val rect = RectF(x, y, x + kw, y + kh)
-            canvas.drawRoundRect(rect, 8f, 8f, specialBg)
-            canvas.drawRoundRect(rect, 8f, 8f, borderPaint)
-            primaryText.textSize = kh * 0.28f
-            val label = if (currentMode == InputMode.JAPANESE) "JP\nEN" else "EN\nJP"
-            val lines = label.split("\n")
-            canvas.drawText(lines[0], x + kw / 2f, y + kh * 0.40f, primaryText)
-            secondaryText.textSize = kh * 0.22f
-            canvas.drawText(lines[1], x + kw / 2f, y + kh * 0.70f, secondaryText)
-        }
-
-        // 中央: スペース
-        run {
-            val x = keyLeft(1)
-            val rect = RectF(x, y, x + kw, y + kh)
-            canvas.drawRoundRect(rect, 8f, 8f, normalBg)
-            canvas.drawRoundRect(rect, 8f, 8f, borderPaint)
-            primaryText.textSize = kh * 0.28f
-            canvas.drawText("空白", x + kw / 2f, y + kh * 0.60f, primaryText)
-        }
-
-        // 右: Enter
-        run {
-            val x = keyLeft(2)
-            val rect = RectF(x, y, x + kw, y + kh)
-            canvas.drawRoundRect(rect, 8f, 8f, specialBg)
-            canvas.drawRoundRect(rect, 8f, 8f, borderPaint)
-            primaryText.textSize = kh * 0.28f
-            canvas.drawText("確定", x + kw / 2f, y + kh * 0.60f, primaryText)
         }
     }
 
@@ -221,52 +195,60 @@ class FlickKeyboardView @JvmOverloads constructor(
         touchStartX = x
         touchStartY = y
         flickCommitted = false
-
-        val col = colAt(x)
-        val row = rowAt(y)
-        if (row < 0 || col < 0) return
-
-        pressedRow = row
-        pressedCol = col
+        if (y < numStripH) {
+            pressedRow = -1
+            pressedCol = (x / numCellW).toInt().coerceIn(0, 9)
+        } else {
+            val r = rowAt(y)
+            val c = colAt(x)
+            if (r >= 0 && c >= 0) {
+                pressedRow = r
+                pressedCol = c
+            } else {
+                pressedRow = -2
+                pressedCol = -1
+            }
+        }
         invalidate()
     }
 
     private fun handleMove(x: Float, y: Float) {
         if (pressedRow < 0 || flickCommitted) return
+        if (pressedCol !in 1..3) return
         val dx = x - touchStartX
         val dy = y - touchStartY
-        val dist = sqrt(dx * dx + dy * dy)
-        if (dist >= flickThreshold) {
+        if (sqrt(dx * dx + dy * dy) >= flickThreshold) {
             commitFlick(pressedRow, pressedCol, dx, dy)
             flickCommitted = true
-            pressedRow = -1
+            pressedRow = -2
             pressedCol = -1
             invalidate()
         }
     }
 
     private fun handleUp(x: Float, y: Float) {
-        if (!flickCommitted && pressedRow >= 0) {
-            commitTap(pressedRow, pressedCol)
+        if (!flickCommitted) {
+            when {
+                pressedRow == -1 && pressedCol in 0..9 -> listener?.onChar(numbers[pressedCol])
+                pressedRow >= 0 && pressedCol >= 0 -> commitTap(pressedRow, pressedCol)
+            }
         }
-        pressedRow = -1
+        pressedRow = -2
         pressedCol = -1
         flickCommitted = false
         invalidate()
     }
 
     private fun commitTap(row: Int, col: Int) {
-        if (row == CHAR_ROWS) {
-            when (col) {
-                0 -> listener?.onSwitchMode()
-                1 -> listener?.onSpace()
-                2 -> listener?.onEnter()
-            }
-            return
-        }
-        val label = charKeys[row][col]
-        when (label) {
-            "⌫" -> listener?.onBackspace()
+        when (val label = getKeyLabel(row, col)) {
+            "⌫"   -> listener?.onBackspace()
+            "↵"   -> listener?.onEnter()
+            "空白" -> listener?.onSpace()
+            "clip" -> listener?.onClipboardOpen()
+            "＜"   -> listener?.onCursorLeft()
+            "＞"   -> listener?.onCursorRight()
+            "1&+" -> listener?.onNumberMode()
+            "abc"  -> listener?.onSwitchMode()
             "小゛" -> listener?.onModifier()
             else -> {
                 val ch = FlickCharTable.JA_KEYS[label]?.center ?: label
@@ -276,44 +258,29 @@ class FlickKeyboardView @JvmOverloads constructor(
     }
 
     private fun commitFlick(row: Int, col: Int, dx: Float, dy: Float) {
-        if (row == CHAR_ROWS) {
-            // ファンクション行はフリックしない
-            commitTap(row, col)
-            return
-        }
-        val label = charKeys[row][col]
-        if (label == "⌫" || label == "小゛") {
-            commitTap(row, col)
-            return
-        }
-
-        val flick = FlickCharTable.JA_KEYS[label] ?: return
-        val ch = flickDirection(dx, dy, flick)
-        listener?.onChar(ch)
-    }
-
-    private fun flickDirection(dx: Float, dy: Float, flick: com.msakasaka.keyboard.engine.FlickChars): String {
-        return if (abs(dx) > abs(dy)) {
+        val label = charKeys[row][col - 1]
+        val flick = FlickCharTable.JA_KEYS[label] ?: run { commitTap(row, col); return }
+        val ch = if (abs(dx) > abs(dy)) {
             if (dx > 0) flick.right.ifEmpty { flick.center }
             else flick.left.ifEmpty { flick.center }
         } else {
             if (dy < 0) flick.up.ifEmpty { flick.center }
             else flick.down.ifEmpty { flick.center }
         }
+        listener?.onChar(ch)
     }
 
     private fun colAt(x: Float): Int {
-        for (c in 0 until COL) {
-            val left = keyLeft(c)
+        for (c in 0 until TOTAL_COLS) {
+            val left = colLeft(c)
             if (x >= left && x < left + kw) return c
         }
         return -1
     }
 
     private fun rowAt(y: Float): Int {
-        val totalRows = CHAR_ROWS + FUNC_ROW
-        for (r in 0 until totalRows) {
-            val top = keyTop(r)
+        for (r in 0 until CHAR_ROWS) {
+            val top = rowTop(r)
             if (y >= top && y < top + kh) return r
         }
         return -1

@@ -18,9 +18,10 @@ object FlickCharTable {
         "な" to FlickChars("な", "に", "ぬ", "ね", "の"),
         "は" to FlickChars("は", "ひ", "ふ", "へ", "ほ"),
         "ま" to FlickChars("ま", "み", "む", "め", "も"),
-        "や" to FlickChars("や", "ゆ", "よ", "？", "！"),
+        "や" to FlickChars("や", "ゆ", "？", "よ", "！"),
         "ら" to FlickChars("ら", "り", "る", "れ", "ろ"),
-        "わ" to FlickChars("わ", "を", "ん", "ー", "〜")
+        "わ" to FlickChars("わ", "を", "ん", "ー", "〜"),
+        "。" to FlickChars("。", "、", "？", "！", "・")
     )
 
     // 行ごとの小文字マップ（小/゛キー用）

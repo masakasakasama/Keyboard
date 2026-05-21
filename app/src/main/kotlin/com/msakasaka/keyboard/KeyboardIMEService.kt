@@ -4,6 +4,7 @@ import android.content.SharedPreferences
 import android.content.ClipDescription
 import android.inputmethodservice.InputMethodService
 import android.net.Uri
+import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -85,10 +86,15 @@ class KeyboardIMEService : InputMethodService() {
             override fun onConvert() = handleConvert()
             override fun onModifier() = handleModifier()
             override fun onSwitchMode() = handleSwitchMode()
+            override fun onNumberMode() = handleNumberMode()
+            override fun onExitNumberMode() = handleExitNumberMode()
             override fun onClipboardOpen() = handleClipboard()
+            override fun onCursorLeft() = handleCursorLeft()
+            override fun onCursorRight() = handleCursorRight()
         }
         mainView.flickKeyboard.listener = keyListener
         mainView.qwertyKeyboard.listener = keyListener
+        mainView.numberKeyboard.listener = keyListener
 
         mainView.clipboardPanel.onImageSelected = { uri, mimeType ->
             commitImage(uri, mimeType)
@@ -199,6 +205,42 @@ class KeyboardIMEService : InputMethodService() {
         }
         engine.toggleMode()
         mainView.currentMode = engine.mode
+    }
+
+    private fun handleNumberMode() {
+        if (engine.state != InputState.IDLE) {
+            val text = engine.commitComposing()
+            currentInputConnection?.apply {
+                finishComposingText()
+                commitText(text, 1)
+            }
+            engine.reset()
+        }
+        engine.mode = InputMode.ENGLISH
+        mainView.showNumberKeyboard()
+        mainView.candidateView.candidates = emptyList()
+    }
+
+    private fun handleExitNumberMode() {
+        val prevMode = mainView.exitNumberKeyboard()
+        engine.mode = prevMode
+        mainView.currentMode = prevMode
+    }
+
+    private fun handleCursorLeft() {
+        if (engine.state != InputState.IDLE) return
+        currentInputConnection?.apply {
+            sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT))
+            sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_LEFT))
+        }
+    }
+
+    private fun handleCursorRight() {
+        if (engine.state != InputState.IDLE) return
+        currentInputConnection?.apply {
+            sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT))
+            sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT))
+        }
     }
 
     private fun handleClipboard() {

@@ -1,7 +1,6 @@
 package com.msakasaka.keyboard.ui
 
 import android.content.Context
-import android.net.Uri
 import android.util.AttributeSet
 import android.view.LayoutInflater
 import android.view.View
@@ -17,16 +16,18 @@ class MainKeyboardView @JvmOverloads constructor(
     val candidateView: CandidateView
     val flickKeyboard: FlickKeyboardView
     val qwertyKeyboard: QwertyKeyboardView
+    val numberKeyboard: NumberKeyboardView
     val clipboardPanel: ClipboardPanel
 
     private var isClipboardShown = false
+    private var isNumberMode = false
+    private var modeBeforeNumber = InputMode.JAPANESE
 
     var currentMode: InputMode = InputMode.JAPANESE
         set(value) {
             field = value
             flickKeyboard.currentMode = value
-            flickKeyboard.visibility = if (value == InputMode.JAPANESE) View.VISIBLE else View.GONE
-            qwertyKeyboard.visibility = if (value == InputMode.ENGLISH) View.VISIBLE else View.GONE
+            if (!isNumberMode) updateKeyboardVisibility()
         }
 
     init {
@@ -35,13 +36,33 @@ class MainKeyboardView @JvmOverloads constructor(
         candidateView = findViewById(R.id.candidate_view)
         flickKeyboard = findViewById(R.id.flick_keyboard)
         qwertyKeyboard = findViewById(R.id.qwerty_keyboard)
+        numberKeyboard = findViewById(R.id.number_keyboard)
         clipboardPanel = findViewById(R.id.clipboard_panel)
         currentMode = InputMode.JAPANESE
+    }
+
+    private fun updateKeyboardVisibility() {
+        flickKeyboard.visibility  = if (!isNumberMode && currentMode == InputMode.JAPANESE) View.VISIBLE else View.GONE
+        qwertyKeyboard.visibility = if (!isNumberMode && currentMode == InputMode.ENGLISH)  View.VISIBLE else View.GONE
+        numberKeyboard.visibility = if (isNumberMode) View.VISIBLE else View.GONE
+    }
+
+    fun showNumberKeyboard() {
+        modeBeforeNumber = currentMode
+        isNumberMode = true
+        updateKeyboardVisibility()
+    }
+
+    fun exitNumberKeyboard(): InputMode {
+        isNumberMode = false
+        updateKeyboardVisibility()
+        return modeBeforeNumber
     }
 
     fun applyKeyHeight(dp: Int) {
         flickKeyboard.keyHeightDp = dp
         qwertyKeyboard.keyHeightDp = dp
+        numberKeyboard.keyHeightDp = dp
     }
 
     fun showClipboard(images: List<ClipboardImage>) {
