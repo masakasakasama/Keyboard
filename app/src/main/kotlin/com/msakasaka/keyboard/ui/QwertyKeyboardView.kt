@@ -151,6 +151,7 @@ class QwertyKeyboardView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
                 val hit = hitTest(event.x, event.y)
                 pressedKey = hit
                 if (hit != null && rows[hit.first].getOrNull(hit.second) == "⌫") {

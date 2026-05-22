@@ -151,11 +151,12 @@ class SettingsActivity : AppCompatActivity() {
         previewScope.launch(Dispatchers.IO) { dict.ensureLoaded() }
 
         previewEngine.onStateChanged = { snapshot ->
-            val full = previewCommitted.toString() + snapshot.composing
+            val display = snapshot.currentCandidate
+            val full = previewCommitted.toString() + display
             val span = SpannableStringBuilder(full)
-            if (snapshot.composing.isNotEmpty()) {
+            if (display.isNotEmpty()) {
                 val s = previewCommitted.length
-                span.setSpan(UnderlineSpan(), s, s + snapshot.composing.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                span.setSpan(UnderlineSpan(), s, s + display.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
             inputText.text = span
             inputText.setSelection(full.length)

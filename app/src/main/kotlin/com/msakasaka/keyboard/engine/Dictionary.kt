@@ -78,7 +78,7 @@ class Dictionary(private val context: Context) {
         for ((key, pairs) in index) {
             if (key != reading && key.startsWith(reading)) {
                 // 同じ短い読みのほうが優先されるよう、長さ差で減点
-                val penalty = (key.length - reading.length) * 50
+                val penalty = (key.length - reading.length) * 120
                 for ((surface, freq) in pairs) {
                     prefixMatches.add(Pair(surface, freq - penalty))
                 }

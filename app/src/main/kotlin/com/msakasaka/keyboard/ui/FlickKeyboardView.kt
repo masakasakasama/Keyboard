@@ -198,7 +198,10 @@ class FlickKeyboardView @JvmOverloads constructor(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.action) {
-            MotionEvent.ACTION_DOWN -> handleDown(event.x, event.y)
+            MotionEvent.ACTION_DOWN -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
+                handleDown(event.x, event.y)
+            }
             MotionEvent.ACTION_MOVE -> handleMove(event.x, event.y)
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> handleUp(event.x, event.y)
         }

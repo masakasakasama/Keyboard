@@ -13,7 +13,12 @@ data class EngineSnapshot(
     val state: InputState,
     val candidates: List<String>,
     val selectedCandidateIndex: Int
-)
+) {
+    val currentCandidate: String get() =
+        if (state == InputState.CONVERTING && candidates.isNotEmpty() && selectedCandidateIndex < candidates.size)
+            candidates[selectedCandidateIndex]
+        else composing
+}
 
 class JapaneseInputEngine(private val dictionary: Dictionary) {
 

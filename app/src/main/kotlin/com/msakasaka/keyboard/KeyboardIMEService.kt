@@ -82,7 +82,7 @@ class KeyboardIMEService : InputMethodService() {
                     mainView.candidateView.candidates = snapshot.candidates
                 }
                 InputState.CONVERTING -> {
-                    currentInputConnection?.setComposingText(snapshot.composing, 1)
+                    currentInputConnection?.setComposingText(snapshot.currentCandidate, 1)
                     mainView.candidateView.candidates = snapshot.candidates
                     mainView.candidateView.selectedIndex = snapshot.selectedCandidateIndex
                 }
