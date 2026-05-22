@@ -6,18 +6,31 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 enum class InputMode { JAPANESE, ENGLISH }
-enum class InputState { COMPOSING, CONVERTING, IDLE }
+enum class InputState { COMPOSING, CONVERTING, SEGMENTED, IDLE }
+
+private data class SegmentState(
+    val reading: String,
+    val candidates: List<String>,
+    var selectedIndex: Int = 0
+) {
+    val current: String get() = candidates.getOrElse(selectedIndex) { reading }
+}
 
 data class EngineSnapshot(
     val composing: String,
     val state: InputState,
     val candidates: List<String>,
-    val selectedCandidateIndex: Int
+    val selectedCandidateIndex: Int,
+    val convertedText: String = ""
 ) {
-    val currentCandidate: String get() =
-        if (state == InputState.CONVERTING && candidates.isNotEmpty() && selectedCandidateIndex < candidates.size)
-            candidates[selectedCandidateIndex]
-        else composing
+    val currentCandidate: String get() = when (state) {
+        InputState.CONVERTING ->
+            if (candidates.isNotEmpty() && selectedCandidateIndex < candidates.size)
+                candidates[selectedCandidateIndex]
+            else composing
+        InputState.SEGMENTED -> convertedText
+        else -> composing
+    }
 }
 
 class JapaneseInputEngine(private val dictionary: Dictionary) {
@@ -29,6 +42,8 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
     private var _state = InputState.IDLE
     private var _candidates = listOf<String>()
     private var _selectedIndex = 0
+    private var _segments: List<SegmentState> = emptyList()
+    private var _focusSegment: Int = 0
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -50,18 +65,16 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
     }
 
     fun appendChar(char: String) {
-        if (_state == InputState.CONVERTING) cancelConversion()
+        if (_state == InputState.CONVERTING || _state == InputState.SEGMENTED) cancelConversion()
         _composing.append(char)
         _state = InputState.COMPOSING
-        // 候補をクリアしない — 非同期lookupが完了するまで前の候補を表示し続ける
         notifyChanged()
         triggerPredictiveLookup()
     }
 
-    /** 直前の1文字に小/゛を適用 */
     fun applyModifierToLast() {
         if (_composing.isEmpty()) return
-        if (_state == InputState.CONVERTING) cancelConversion()
+        if (_state == InputState.CONVERTING || _state == InputState.SEGMENTED) cancelConversion()
         val last = _composing.last().toString()
         val modified = FlickCharTable.applyModifier(last)
         if (modified != null) {
@@ -74,7 +87,7 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
 
     fun backspace(): Boolean {
         return when {
-            _state == InputState.CONVERTING -> {
+            _state == InputState.CONVERTING || _state == InputState.SEGMENTED -> {
                 cancelConversion()
                 true
             }
@@ -98,13 +111,53 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
         scope.launch {
             dictionary.ensureLoaded()
             val reading = _composing.toString()
-            val lookupKey = if (mode == InputMode.ENGLISH) reading.lowercase() else reading
-            val fromDict = dictionary.lookup(lookupKey)
-            _candidates = buildCandidateList(reading, fromDict)
-            _selectedIndex = 0
-            _state = InputState.CONVERTING
+            val segs = dictionary.segment(reading)
+            if (segs.isEmpty()) {
+                val fromDict = dictionary.lookup(reading)
+                _candidates = buildCandidateList(reading, fromDict)
+                _selectedIndex = 0
+                _state = InputState.CONVERTING
+                notifyChanged()
+                return@launch
+            }
+            _segments = segs.map { (r, cands) -> SegmentState(r, cands) }
+            _focusSegment = 0
+            _state = InputState.SEGMENTED
+            updateFromFocusedSegment()
             notifyChanged()
         }
+    }
+
+    private fun updateFromFocusedSegment() {
+        val seg = _segments.getOrNull(_focusSegment)
+        _candidates = seg?.candidates ?: emptyList()
+        _selectedIndex = seg?.selectedIndex ?: 0
+    }
+
+    fun getConvertedText(): String = _segments.joinToString("") { it.current }
+
+    fun nextSegment(): Boolean {
+        if (_state != InputState.SEGMENTED) return false
+        if (_focusSegment >= _segments.size - 1) return false
+        _focusSegment++
+        updateFromFocusedSegment()
+        notifyChanged()
+        return true
+    }
+
+    fun selectSegmentCandidate(index: Int) {
+        if (_state != InputState.SEGMENTED) return
+        val seg = _segments.getOrNull(_focusSegment) ?: return
+        seg.selectedIndex = index.coerceIn(0, seg.candidates.size - 1)
+        _selectedIndex = seg.selectedIndex
+        notifyChanged()
+    }
+
+    fun commitAllSegments(): String {
+        val text = getConvertedText()
+        for (seg in _segments) dictionary.learn(seg.reading, seg.current)
+        reset()
+        return text
     }
 
     fun selectCandidate(index: Int): String {
@@ -126,6 +179,13 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
     }
 
     fun nextCandidate() {
+        if (_state == InputState.SEGMENTED) {
+            val seg = _segments.getOrNull(_focusSegment) ?: return
+            seg.selectedIndex = (seg.selectedIndex + 1) % seg.candidates.size
+            _selectedIndex = seg.selectedIndex
+            notifyChanged()
+            return
+        }
         if (_candidates.isEmpty()) return
         _selectedIndex = (_selectedIndex + 1) % _candidates.size
         notifyChanged()
@@ -139,6 +199,8 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
 
     fun cancelConversion() {
         _state = InputState.COMPOSING
+        _segments = emptyList()
+        _focusSegment = 0
         _candidates = emptyList()
         _selectedIndex = 0
         notifyChanged()
@@ -149,6 +211,8 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
         _state = InputState.IDLE
         _candidates = emptyList()
         _selectedIndex = 0
+        _segments = emptyList()
+        _focusSegment = 0
         notifyChanged()
     }
 
@@ -157,7 +221,6 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
         scope.launch {
             dictionary.ensureLoaded()
             if (_state == InputState.COMPOSING && _composing.toString() == capturedReading) {
-                // 英語モードでは大文字小文字を無視して検索
                 val lookupKey = if (mode == InputMode.ENGLISH) capturedReading.lowercase() else capturedReading
                 val fromDict = dictionary.lookup(lookupKey)
                 _candidates = buildCandidateList(capturedReading, fromDict)
@@ -168,14 +231,12 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
 
     private fun buildCandidateList(reading: String, dictResults: List<String>): List<String> {
         val result = mutableListOf<String>()
-        // 英語モードで先頭が大文字なら、辞書から取った候補も先頭大文字に
         val applyCap = mode == InputMode.ENGLISH && reading.isNotEmpty() && reading[0].isUpperCase()
         val adapted = if (applyCap) {
             dictResults.map { if (it.isNotEmpty() && it[0].isLowerCase()) it.replaceFirstChar { c -> c.uppercaseChar() } else it }
         } else dictResults
         result.addAll(adapted)
         if (!result.contains(reading)) result.add(reading)
-        // カタカナ変換を追加（日本語モードのみ）
         if (mode == InputMode.JAPANESE) {
             val katakana = toKatakana(reading)
             if (katakana != reading && !result.contains(katakana)) result.add(katakana)
@@ -187,18 +248,15 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
         return buildString {
             for (ch in hiragana) {
                 val code = ch.code
-                if (code in 0x3041..0x3096) {
-                    append((code + 0x60).toChar())
-                } else {
-                    append(ch)
-                }
+                if (code in 0x3041..0x3096) append((code + 0x60).toChar()) else append(ch)
             }
         }
     }
 
     private fun notifyChanged() {
+        val converted = if (_state == InputState.SEGMENTED) getConvertedText() else ""
         onStateChanged?.invoke(
-            EngineSnapshot(_composing.toString(), _state, _candidates, _selectedIndex)
+            EngineSnapshot(_composing.toString(), _state, _candidates, _selectedIndex, converted)
         )
     }
 }

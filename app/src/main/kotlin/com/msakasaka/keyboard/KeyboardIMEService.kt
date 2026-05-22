@@ -86,6 +86,11 @@ class KeyboardIMEService : InputMethodService() {
                     mainView.candidateView.candidates = snapshot.candidates
                     mainView.candidateView.selectedIndex = snapshot.selectedCandidateIndex
                 }
+                InputState.SEGMENTED -> {
+                    currentInputConnection?.setComposingText(snapshot.convertedText, 1)
+                    mainView.candidateView.candidates = snapshot.candidates
+                    mainView.candidateView.selectedIndex = snapshot.selectedCandidateIndex
+                }
                 InputState.IDLE -> {
                     if (!isShowingAiPredictions) {
                         mainView.candidateView.candidates = emptyList()
@@ -96,17 +101,28 @@ class KeyboardIMEService : InputMethodService() {
 
         // commitText() replaces any current composing region — no finishComposingText() needed
         mainView.candidateView.onCandidateClick = { index ->
-            if (engine.state == InputState.IDLE && isShowingAiPredictions) {
-                val prediction = mainView.candidateView.candidates.getOrNull(index)
-                if (prediction != null) {
-                    isShowingAiPredictions = false
-                    currentInputConnection?.commitText("$prediction ", 1)
+            when {
+                engine.state == InputState.IDLE && isShowingAiPredictions -> {
+                    val prediction = mainView.candidateView.candidates.getOrNull(index)
+                    if (prediction != null) {
+                        isShowingAiPredictions = false
+                        currentInputConnection?.commitText("$prediction ", 1)
+                        triggerAiPrediction()
+                    }
+                }
+                engine.state == InputState.SEGMENTED -> {
+                    engine.selectSegmentCandidate(index)
+                    if (!engine.nextSegment()) {
+                        val text = engine.commitAllSegments()
+                        currentInputConnection?.commitText(text, 1)
+                        triggerAiPrediction()
+                    }
+                }
+                else -> {
+                    val selected = engine.selectCandidate(index)
+                    currentInputConnection?.commitText(selected, 1)
                     triggerAiPrediction()
                 }
-            } else {
-                val selected = engine.selectCandidate(index)
-                currentInputConnection?.commitText(selected, 1)
-                triggerAiPrediction()
             }
         }
 
@@ -230,6 +246,11 @@ class KeyboardIMEService : InputMethodService() {
                 currentInputConnection?.commitText(selected, 1)
                 triggerAiPrediction()
             }
+            InputState.SEGMENTED -> {
+                val text = engine.commitAllSegments()
+                currentInputConnection?.commitText(text, 1)
+                triggerAiPrediction()
+            }
             InputState.IDLE -> {
                 currentInputConnection?.commitText("\n", 1)
             }
@@ -247,7 +268,7 @@ class KeyboardIMEService : InputMethodService() {
                     engine.startConversion()
                 }
             }
-            InputState.CONVERTING -> engine.nextCandidate()
+            InputState.CONVERTING, InputState.SEGMENTED -> engine.nextCandidate()
             InputState.IDLE -> {
                 val sp = if (engine.mode == InputMode.JAPANESE) "　" else " "
                 currentInputConnection?.commitText(sp, 1)
@@ -258,7 +279,7 @@ class KeyboardIMEService : InputMethodService() {
     private fun handleConvert() {
         when (engine.state) {
             InputState.COMPOSING -> engine.startConversion()
-            InputState.CONVERTING -> engine.nextCandidate()
+            InputState.CONVERTING, InputState.SEGMENTED -> engine.nextCandidate()
             else -> {}
         }
     }
@@ -295,6 +316,14 @@ class KeyboardIMEService : InputMethodService() {
     }
 
     private fun handleCursorRight() {
+        if (engine.state == InputState.SEGMENTED) {
+            if (!engine.nextSegment()) {
+                val text = engine.commitAllSegments()
+                currentInputConnection?.commitText(text, 1)
+                triggerAiPrediction()
+            }
+            return
+        }
         if (engine.state != InputState.IDLE) return
         currentInputConnection?.apply {
             sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT))

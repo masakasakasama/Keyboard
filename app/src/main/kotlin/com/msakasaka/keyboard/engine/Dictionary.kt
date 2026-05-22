@@ -347,4 +347,45 @@ class Dictionary(private val context: Context) {
             add(reading, surface, freq)
         }
     }
+
+    fun segment(input: String): List<Pair<String, List<String>>> {
+        if (input.isEmpty()) return emptyList()
+        val n = input.length
+        val dp = IntArray(n + 1) { Int.MAX_VALUE / 2 }
+        val from = IntArray(n + 1) { -1 }
+        dp[0] = 0
+
+        for (i in 0 until n) {
+            if (dp[i] == Int.MAX_VALUE / 2) continue
+            // single-char fallback
+            val sc = dp[i] + 8000
+            if (sc < dp[i + 1]) { dp[i + 1] = sc; from[i + 1] = i }
+            // dictionary matches
+            for (len in 1..minOf(12, n - i)) {
+                val sub = input.substring(i, i + len)
+                val best = index[sub]?.maxOfOrNull { it.second } ?: continue
+                val cost = dp[i] + (10000 - best.coerceAtMost(9999))
+                if (cost < dp[i + len]) { dp[i + len] = cost; from[i + len] = i }
+            }
+        }
+
+        val segs = mutableListOf<String>()
+        var p = n
+        while (p > 0) {
+            val f = from[p]
+            if (f < 0) { p--; continue }
+            segs.add(0, input.substring(f, p))
+            p = f
+        }
+
+        return segs.map { seg ->
+            val cands = (index[seg]
+                ?.sortedByDescending { it.second }
+                ?.map { it.first }
+                ?.distinct()
+                ?: emptyList())
+            val full = if (!cands.contains(seg)) cands + seg else cands
+            Pair(seg, full.take(15))
+        }
+    }
 }

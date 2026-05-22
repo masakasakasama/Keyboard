@@ -152,7 +152,7 @@ class SettingsActivity : AppCompatActivity() {
 
         previewEngine.onStateChanged = { snapshot ->
             val display = snapshot.currentCandidate
-            val full = previewCommitted.toString() + display
+            val full = previewCommitted.toString() + display.ifEmpty { snapshot.composing }
             val span = SpannableStringBuilder(full)
             if (display.isNotEmpty()) {
                 val s = previewCommitted.length
@@ -166,10 +166,23 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         candidateView.onCandidateClick = { index ->
-            val selected = previewEngine.selectCandidate(index)
-            previewCommitted.append(selected)
-            inputText.setText(previewCommitted.toString())
-            inputText.setSelection(previewCommitted.length)
+            when (previewEngine.state) {
+                InputState.SEGMENTED -> {
+                    previewEngine.selectSegmentCandidate(index)
+                    if (!previewEngine.nextSegment()) {
+                        val text = previewEngine.commitAllSegments()
+                        previewCommitted.append(text)
+                        inputText.setText(previewCommitted.toString())
+                        inputText.setSelection(previewCommitted.length)
+                    }
+                }
+                else -> {
+                    val selected = previewEngine.selectCandidate(index)
+                    previewCommitted.append(selected)
+                    inputText.setText(previewCommitted.toString())
+                    inputText.setSelection(previewCommitted.length)
+                }
+            }
         }
 
         val listener = object : KeyboardListener {
@@ -203,6 +216,12 @@ class SettingsActivity : AppCompatActivity() {
                         inputText.setText(previewCommitted.toString())
                         inputText.setSelection(previewCommitted.length)
                     }
+                    InputState.SEGMENTED -> {
+                        val text = previewEngine.commitAllSegments()
+                        previewCommitted.append(text)
+                        inputText.setText(previewCommitted.toString())
+                        inputText.setSelection(previewCommitted.length)
+                    }
                     InputState.IDLE -> {
                         previewCommitted.append("\n")
                         inputText.setText(previewCommitted.toString())
@@ -223,7 +242,7 @@ class SettingsActivity : AppCompatActivity() {
                             previewEngine.startConversion()
                         }
                     }
-                    InputState.CONVERTING -> previewEngine.nextCandidate()
+                    InputState.CONVERTING, InputState.SEGMENTED -> previewEngine.nextCandidate()
                     InputState.IDLE -> {
                         val sp = if (previewEngine.mode == InputMode.JAPANESE) "　" else " "
                         previewCommitted.append(sp)
@@ -236,7 +255,7 @@ class SettingsActivity : AppCompatActivity() {
             override fun onConvert() {
                 when (previewEngine.state) {
                     InputState.COMPOSING -> previewEngine.startConversion()
-                    InputState.CONVERTING -> previewEngine.nextCandidate()
+                    InputState.CONVERTING, InputState.SEGMENTED -> previewEngine.nextCandidate()
                     else -> {}
                 }
             }
