@@ -10,7 +10,7 @@ data class DictEntry(val reading: String, val surface: String, val freq: Int)
 class Dictionary(private val context: Context) {
 
     // reading -> list of (surface, freq)
-    private val index = HashMap<String, MutableList<Pair<String, Int>>>(8192)
+    private val index = HashMap<String, MutableList<Pair<String, Int>>>(65536)
     private var loaded = false
 
     private val userPrefs: SharedPreferences
@@ -116,16 +116,22 @@ class Dictionary(private val context: Context) {
 
     private fun loadFromAssets() {
         try {
-            context.assets.open("japanese_dictionary.txt").bufferedReader().forEachLine { line ->
-                if (line.startsWith("#") || line.isBlank()) return@forEachLine
-                val parts = line.split("\t")
-                if (parts.size >= 2) {
-                    val reading = parts[0].trim()
-                    val surface = parts[1].trim()
-                    val freq = if (parts.size >= 3) parts[2].trim().toIntOrNull() ?: 100 else 100
-                    if (reading.isNotEmpty() && surface.isNotEmpty()) {
-                        add(reading, surface, freq)
+            context.assets.open("japanese_dictionary.txt").bufferedReader(Charsets.UTF_8).use { br ->
+                var line = br.readLine()
+                while (line != null) {
+                    if (line.isNotEmpty() && line[0] != '#') {
+                        val t1 = line.indexOf('\t')
+                        if (t1 > 0) {
+                            val t2 = line.indexOf('\t', t1 + 1)
+                            val reading = line.substring(0, t1)
+                            val surface = if (t2 > 0) line.substring(t1 + 1, t2) else line.substring(t1 + 1)
+                            val freq = if (t2 > 0) line.substring(t2 + 1).toIntOrNull() ?: 100 else 100
+                            if (reading.isNotEmpty() && surface.isNotEmpty()) {
+                                add(reading, surface, freq)
+                            }
+                        }
                     }
+                    line = br.readLine()
                 }
             }
         } catch (_: Exception) {}
