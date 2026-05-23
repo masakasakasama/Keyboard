@@ -2,10 +2,10 @@ package com.msakasaka.keyboard.engine
 
 import android.content.Context
 import android.content.SharedPreferences
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-
-data class DictEntry(val reading: String, val surface: String, val freq: Int)
 
 class Dictionary(private val context: Context) {
 
@@ -18,13 +18,25 @@ class Dictionary(private val context: Context) {
             instance ?: synchronized(this) {
                 instance ?: Dictionary(context.applicationContext).also { instance = it }
             }
+
+        private const val BOS_EOS = 0      // 文頭・文末の品詞ID
+        private const val UNK_ID = 1851    // 名詞,一般（ユーザー語・未知語の既定品詞）
     }
 
-    // reading -> list of (surface, freq)
-    private val index = HashMap<String, MutableList<Pair<String, Int>>>(1 shl 19)
+    /** surface=表記, cost=単語コスト(小さいほど高頻度), lid/rid=連接用の左右品詞ID */
+    private class Entry(val surface: String, val cost: Int, val lid: Int, val rid: Int)
+
+    private class Node(val cost: Int, val rid: Int, val surface: String, val start: Int, val prevIdx: Int)
+
+    // reading -> entries
+    private val index = HashMap<String, MutableList<Entry>>(1 shl 19)
     // lexicographically sorted keys for fast prefix range scan
     private var sortedKeys: Array<String> = emptyArray()
     private var loaded = false
+
+    // mozc 連接コスト行列（connN x connN, 行=直前語のrid, 列=次語のlid）
+    private var conn: ShortArray = ShortArray(0)
+    private var connN = 0
 
     private val PREFIX_SCAN_CAP = 4000
 
@@ -34,59 +46,15 @@ class Dictionary(private val context: Context) {
 
     private fun hasKanji(s: String): Boolean = s.any { it.code in 0x4E00..0x9FFF }
 
-    /**
-     * 編集距離1の誤入力補正。reading の各位置を置換/挿入/削除/転置し、
-     * 辞書に存在する変換語を集める。requireKanji=true なら漢字を含む変換のみ
-     * （かな打ち間違いを漢字へ補正する用途）。コストは編集ペナルティで減点。
-     */
-    private fun fuzzyCorrections(reading: String, requireKanji: Boolean): List<Pair<String, Int>> {
-        if (reading.length < 3 || reading.length > 16) return emptyList()
-        val alphabet = when {
-            reading[0].code in 0x3041..0x3096 -> HIRAGANA
-            reading[0] in 'a'..'z' -> LATIN
-            else -> return emptyList()
-        }
-        val out = HashMap<String, Int>()
-        fun consider(variant: String, penalty: Int) {
-            if (variant == reading || variant.isEmpty()) return
-            val list = index[variant] ?: return
-            for ((s, f) in list) {
-                if (requireKanji && !hasKanji(s)) continue
-                val score = f - penalty
-                val prev = out[s]
-                if (prev == null || score > prev) out[s] = score
-            }
-        }
-        for (i in reading.indices) {
-            val pre = reading.substring(0, i)
-            val suf = reading.substring(i + 1)
-            for (c in alphabet) if (c != reading[i]) consider(pre + c + suf, 2000)
-        }
-        for (i in 0..reading.length) {
-            val pre = reading.substring(0, i)
-            val suf = reading.substring(i)
-            for (c in alphabet) consider(pre + c + suf, 2300)
-        }
-        for (i in reading.indices) consider(reading.removeRange(i, i + 1), 2500)
-        for (i in 0 until reading.length - 1) {
-            if (reading[i] == reading[i + 1]) continue
-            val sb = StringBuilder(reading)
-            sb[i] = reading[i + 1]; sb[i + 1] = reading[i]
-            consider(sb.toString(), 2200)
-        }
-        return out.entries.sortedByDescending { it.value }.map { it.key to it.value }.take(8)
-    }
-
     private val userPrefs: SharedPreferences
         get() = context.getSharedPreferences("user_dict", Context.MODE_PRIVATE)
 
     suspend fun ensureLoaded() {
         if (loaded) return
         withContext(Dispatchers.IO) {
-            loadFunctionWords()
-            loadBuiltIn()
             loadFromAssets("japanese_dictionary.txt")
             loadFromAssets("english_dictionary.txt")
+            loadConnection()
             loadUserData()
             sortedKeys = index.keys.toTypedArray()
             sortedKeys.sort()
@@ -94,18 +62,26 @@ class Dictionary(private val context: Context) {
         }
     }
 
-    /** 候補選択時に呼ぶ。次回から優先表示される */
+    private fun addEntry(reading: String, e: Entry) {
+        index.getOrPut(reading) { ArrayList(2) }.add(e)
+    }
+
+    private fun trans(rid: Int, lid: Int): Int {
+        if (connN == 0) return 0
+        return conn[rid * connN + lid].toInt()
+    }
+
+    /** 候補選択時に呼ぶ。次回から優先表示・優先変換される */
     fun learn(reading: String, surface: String) {
         if (reading.isEmpty() || surface.isEmpty()) return
         val key = "l\t$reading\t$surface"
         val count = userPrefs.getInt(key, 0) + 1
         userPrefs.edit().putInt(key, count).apply()
-        // メモリ内インデックスも即時更新
-        val list = index.getOrPut(reading) { mutableListOf() }
-        val idx = list.indexOfFirst { it.first == surface }
-        val newFreq = 9000 + count * 100
-        if (idx >= 0) list[idx] = Pair(surface, newFreq)
-        else list.add(Pair(surface, newFreq))
+        val cost = maxOf(1, 800 - count * 150)
+        val list = index.getOrPut(reading) { ArrayList(2) }
+        val idx = list.indexOfFirst { it.surface == surface }
+        val e = Entry(surface, cost, UNK_ID, UNK_ID)
+        if (idx >= 0) list[idx] = e else list.add(e)
     }
 
     /** ユーザー辞書に単語を追加 */
@@ -113,7 +89,7 @@ class Dictionary(private val context: Context) {
         if (reading.isEmpty() || surface.isEmpty()) return
         val key = "c\t$reading\t$surface"
         userPrefs.edit().putBoolean(key, true).apply()
-        add(reading, surface, 10000)
+        addEntry(reading, Entry(surface, 1, UNK_ID, UNK_ID))
     }
 
     /** ユーザー辞書から単語を削除（次回 ensureLoaded 後に反映） */
@@ -134,54 +110,133 @@ class Dictionary(private val context: Context) {
             .sortedBy { it.first }
     }
 
-    /** ひらがな読みが reading で始まるエントリを返す。頻度順、最大 limit 件 */
+    /** ひらがな読みが reading で始まるエントリを返す。コスト昇順、最大 limit 件 */
     fun lookup(reading: String, limit: Int = 60): List<String> {
         if (reading.isEmpty()) return emptyList()
+        val isJa = reading[0].code in 0x3041..0x3096
 
-        // 完全一致は最優先（基本周波数 +1000 ブースト）
-        val exactMatches = index[reading]?.map { Pair(it.first, it.second + 1000) } ?: emptyList()
+        // 候補は (surface, score)。score は小さいほど上位
+        val results = ArrayList<Pair<String, Int>>()
 
-        // 前方一致：ソート済みキー配列を二分探索し、prefix 範囲だけを走査
-        val prefixMatches = mutableListOf<Pair<String, Int>>()
+        // 完全一致（コスト -1000 ブースト）。日本語はかな同一表記をスキップ（読み自体は後段で追加）
+        index[reading]?.forEach { e ->
+            if (isJa && e.surface == reading) return@forEach
+            results.add(e.surface to (e.cost - 1000))
+        }
+
+        // 前方一致：ソート済みキー配列を二分探索し prefix 範囲のみ走査
         val keys = sortedKeys
-        var lo = 0
-        var hi = keys.size
+        var lo = 0; var hi = keys.size
         while (lo < hi) {
             val mid = (lo + hi) ushr 1
             if (keys[mid] < reading) lo = mid + 1 else hi = mid
         }
-        var idx = lo
+        var ki = lo
         var visited = 0
-        while (idx < keys.size && keys[idx].startsWith(reading) && visited < PREFIX_SCAN_CAP) {
-            val key = keys[idx]
+        while (ki < keys.size && keys[ki].startsWith(reading) && visited < PREFIX_SCAN_CAP) {
+            val key = keys[ki]
             if (key != reading) {
-                // 同じ短い読みのほうが優先されるよう、長さ差で減点
-                val penalty = (key.length - reading.length) * 120
-                index[key]?.forEach { (surface, freq) ->
-                    prefixMatches.add(Pair(surface, freq - penalty))
+                val penalty = (key.length - reading.length) * 200
+                index[key]?.forEach { e ->
+                    if (isJa && e.surface == key) return@forEach
+                    results.add(e.surface to (e.cost + penalty))
                 }
                 visited++
             }
-            idx++
+            ki++
         }
 
-        var combined: List<Pair<String, Int>> = exactMatches + prefixMatches
+        // 誤入力補正：有効な変換が無いときだけ編集距離1で補う
+        val needFuzzy = if (isJa) results.none { hasKanji(it.first) }
+                        else results.count { it.first != reading } < 3
+        if (needFuzzy) results.addAll(fuzzyCorrections(reading, requireKanji = isJa))
 
-        // 誤入力補正：通常候補に有効な変換が無いときだけ編集距離1で補う
-        val isJa = reading[0].code in 0x3041..0x3096
-        val needFuzzy = if (isJa) combined.none { hasKanji(it.first) }
-                        else combined.count { it.first != reading } < 3
-        if (needFuzzy) combined = combined + fuzzyCorrections(reading, requireKanji = isJa)
-
-        return combined
-            .sortedByDescending { it.second }
+        return results
+            .sortedBy { it.second }
             .map { it.first }
             .distinct()
             .take(limit)
     }
 
-    private fun add(reading: String, surface: String, freq: Int) {
-        index.getOrPut(reading) { mutableListOf() }.add(Pair(surface, freq))
+    /**
+     * 編集距離1の誤入力補正。reading の各位置を置換/挿入/削除/転置し、
+     * 辞書に存在する変換語を集める。requireKanji=true なら漢字を含む変換のみ。
+     */
+    private fun fuzzyCorrections(reading: String, requireKanji: Boolean): List<Pair<String, Int>> {
+        if (reading.length < 3 || reading.length > 16) return emptyList()
+        val alphabet = when {
+            reading[0].code in 0x3041..0x3096 -> HIRAGANA
+            reading[0] in 'a'..'z' -> LATIN
+            else -> return emptyList()
+        }
+        val out = HashMap<String, Int>()
+        fun consider(variant: String, penalty: Int) {
+            if (variant == reading || variant.isEmpty()) return
+            index[variant]?.forEach { e ->
+                if (requireKanji && !hasKanji(e.surface)) return@forEach
+                val score = e.cost + penalty
+                val prev = out[e.surface]
+                if (prev == null || score < prev) out[e.surface] = score
+            }
+        }
+        for (i in reading.indices) {
+            val pre = reading.substring(0, i)
+            val suf = reading.substring(i + 1)
+            for (c in alphabet) if (c != reading[i]) consider(pre + c + suf, 2000)
+        }
+        for (i in 0..reading.length) {
+            val pre = reading.substring(0, i)
+            val suf = reading.substring(i)
+            for (c in alphabet) consider(pre + c + suf, 2300)
+        }
+        for (i in reading.indices) consider(reading.removeRange(i, i + 1), 2500)
+        for (i in 0 until reading.length - 1) {
+            if (reading[i] == reading[i + 1]) continue
+            val sb = StringBuilder(reading)
+            sb[i] = reading[i + 1]; sb[i + 1] = reading[i]
+            consider(sb.toString(), 2200)
+        }
+        return out.entries.sortedBy { it.value }.map { it.key to it.value }.take(8)
+    }
+
+    private fun loadFromAssets(fileName: String) {
+        try {
+            context.assets.open(fileName).bufferedReader(Charsets.UTF_8).useLines { lines ->
+                for (line in lines) {
+                    if (line.isEmpty() || line[0] == '#') continue
+                    val parts = line.split('\t')
+                    when (parts.size) {
+                        5 -> { // reading surface cost lid rid （日本語）
+                            val cost = parts[2].toIntOrNull() ?: continue
+                            val lid = parts[3].toIntOrNull() ?: UNK_ID
+                            val rid = parts[4].toIntOrNull() ?: UNK_ID
+                            if (parts[0].isNotEmpty() && parts[1].isNotEmpty())
+                                addEntry(parts[0], Entry(parts[1], cost, lid, rid))
+                        }
+                        3 -> { // word word freq （英語）
+                            val freq = parts[2].toIntOrNull() ?: 100
+                            if (parts[0].isNotEmpty() && parts[1].isNotEmpty())
+                                addEntry(parts[0], Entry(parts[1], 10000 - freq, BOS_EOS, BOS_EOS))
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun loadConnection() {
+        try {
+            val bytes = context.assets.open("connection.bin").use { it.readBytes() }
+            val bb = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN)
+            val n = bb.int
+            val size = n * n
+            val arr = ShortArray(size)
+            bb.asShortBuffer().get(arr)
+            connN = n
+            conn = arr
+        } catch (_: Exception) {
+            connN = 0
+        }
     }
 
     private fun loadUserData() {
@@ -191,314 +246,83 @@ class Dictionary(private val context: Context) {
                     val parts = key.removePrefix("l\t").split("\t")
                     if (parts.size == 2) {
                         val count = value as? Int ?: 1
-                        add(parts[0], parts[1], 9000 + count * 100)
+                        addEntry(parts[0], Entry(parts[1], maxOf(1, 800 - count * 150), UNK_ID, UNK_ID))
                     }
                 }
                 key.startsWith("c\t") -> {
                     val parts = key.removePrefix("c\t").split("\t")
-                    if (parts.size == 2) add(parts[0], parts[1], 10000)
+                    if (parts.size == 2) addEntry(parts[0], Entry(parts[1], 1, UNK_ID, UNK_ID))
                 }
             }
         }
-    }
-
-    private fun loadFromAssets(fileName: String) {
-        try {
-            context.assets.open(fileName).bufferedReader(Charsets.UTF_8).use { br ->
-                var line = br.readLine()
-                while (line != null) {
-                    if (line.isNotEmpty() && line[0] != '#') {
-                        val t1 = line.indexOf('\t')
-                        if (t1 > 0) {
-                            val t2 = line.indexOf('\t', t1 + 1)
-                            val reading = line.substring(0, t1)
-                            val surface = if (t2 > 0) line.substring(t1 + 1, t2) else line.substring(t1 + 1)
-                            val freq = if (t2 > 0) line.substring(t2 + 1).toIntOrNull() ?: 100 else 100
-                            if (reading.isNotEmpty() && surface.isNotEmpty()) {
-                                add(reading, surface, freq)
-                            }
-                        }
-                    }
-                    line = br.readLine()
-                }
-            }
-        } catch (_: Exception) {}
     }
 
     /**
-     * 助詞・助動詞・語尾・頻出かな語を最優先(10000)で登録。
-     * 単語コストモデルだけでは同音異義の漢字に負けがちな機能語を、
-     * 文節分割でも候補表示でも先頭に来るよう底上げする。
+     * 連接コスト付きラティス Viterbi による形態素解析（文節分割＋変換）。
+     * 各文節について (読み, 候補表記リスト) を返す。先頭候補が最尤変換。
      */
-    private fun loadFunctionWords() {
-        val words = listOf(
-            // 助詞
-            "は", "が", "を", "に", "へ", "と", "も", "の", "や", "ね", "よ", "わ", "か",
-            "から", "まで", "より", "など", "ので", "のに", "けど", "けれど",
-            "のは", "には", "とは", "では", "って", "でも", "ても", "し", "ば",
-            // 助動詞・語尾・コピュラ
-            "です", "ます", "だ", "た", "て", "ない", "ません", "でした", "ました",
-            "ましょう", "ませんでした", "たい", "でしょう", "だろう", "である",
-            "ている", "ています", "ていた", "なる", "れる", "られる", "せる",
-            // 頻出かな動詞・連体詞・名詞
-            "する", "いる", "ある", "できる",
-            "これ", "それ", "あれ", "この", "その", "あの",
-            "こと", "もの", "ため", "とき", "よう", "そう", "いい"
-        )
-        for (w in words) add(w, w, 10000)
-    }
-
-    private fun loadBuiltIn() {
-        val entries = listOf(
-            // 代名詞
-            Triple("わたし", "私", 9000), Triple("わたし", "わたし", 7000),
-            Triple("わたしたち", "私たち", 7000), Triple("ぼく", "僕", 8000),
-            Triple("おれ", "俺", 7000), Triple("あなた", "あなた", 8000),
-            Triple("あなた", "貴方", 5000), Triple("きみ", "君", 7000),
-            Triple("かれ", "彼", 8000), Triple("かのじょ", "彼女", 8000),
-            Triple("かれら", "彼ら", 6000), Triple("みんな", "みんな", 8000),
-            Triple("みんな", "皆", 7000), Triple("じぶん", "自分", 8000),
-            // 指示語
-            Triple("これ", "これ", 9000), Triple("それ", "それ", 9000),
-            Triple("あれ", "あれ", 8000), Triple("どれ", "どれ", 7000),
-            Triple("この", "この", 9000), Triple("その", "その", 9000),
-            Triple("あの", "あの", 8000), Triple("どの", "どの", 7000),
-            Triple("ここ", "ここ", 9000), Triple("そこ", "そこ", 8000),
-            Triple("あそこ", "あそこ", 7000), Triple("どこ", "どこ", 8000),
-            Triple("こう", "こう", 7000), Triple("そう", "そう", 9000),
-            Triple("ああ", "ああ", 6000), Triple("どう", "どう", 8000),
-            // 時間
-            Triple("いま", "今", 9000), Triple("きょう", "今日", 9000),
-            Triple("きょう", "きょう", 6000), Triple("あした", "明日", 9000),
-            Triple("あす", "明日", 8000), Triple("きのう", "昨日", 9000),
-            Triple("おととい", "一昨日", 7000), Triple("あさって", "明後日", 7000),
-            Triple("ことし", "今年", 9000), Triple("らいねん", "来年", 8000),
-            Triple("きょねん", "去年", 8000), Triple("まいにち", "毎日", 8000),
-            Triple("まいとし", "毎年", 7000), Triple("まいあさ", "毎朝", 7000),
-            Triple("まいばん", "毎晩", 7000), Triple("ごぜん", "午前", 8000),
-            Triple("ごご", "午後", 8000), Triple("あさ", "朝", 9000),
-            Triple("ひる", "昼", 9000), Triple("よる", "夜", 9000),
-            Triple("ばん", "晩", 7000), Triple("よあけ", "夜明け", 6000),
-            Triple("じかん", "時間", 9000), Triple("ふん", "分", 8000),
-            Triple("びょう", "秒", 7000), Triple("にち", "日", 8000),
-            Triple("しゅう", "週", 7000), Triple("つき", "月", 8000),
-            Triple("ねん", "年", 9000), Triple("せんしゅう", "先週", 8000),
-            Triple("こんしゅう", "今週", 8000), Triple("らいしゅう", "来週", 8000),
-            Triple("せんげつ", "先月", 8000), Triple("こんげつ", "今月", 8000),
-            Triple("らいげつ", "来月", 8000), Triple("いちがつ", "1月", 7000),
-            Triple("にがつ", "2月", 7000), Triple("さんがつ", "3月", 7000),
-            Triple("しがつ", "4月", 7000), Triple("ごがつ", "5月", 7000),
-            Triple("ろくがつ", "6月", 7000), Triple("しちがつ", "7月", 7000),
-            Triple("はちがつ", "8月", 7000), Triple("くがつ", "9月", 7000),
-            Triple("じゅうがつ", "10月", 7000), Triple("じゅういちがつ", "11月", 7000),
-            Triple("じゅうにがつ", "12月", 7000),
-            Triple("げつようび", "月曜日", 7000), Triple("かようび", "火曜日", 7000),
-            Triple("すいようび", "水曜日", 7000), Triple("もくようび", "木曜日", 7000),
-            Triple("きんようび", "金曜日", 7000), Triple("どようび", "土曜日", 7000),
-            Triple("にちようび", "日曜日", 7000),
-            // 場所・方向
-            Triple("みぎ", "右", 8000), Triple("ひだり", "左", 8000),
-            Triple("うえ", "上", 9000), Triple("した", "下", 9000),
-            Triple("まえ", "前", 9000), Triple("うしろ", "後ろ", 8000),
-            Triple("なか", "中", 9000), Triple("そと", "外", 8000),
-            Triple("よこ", "横", 7000), Triple("となり", "隣", 7000),
-            Triple("ちかく", "近く", 8000), Triple("とおく", "遠く", 7000),
-            Triple("むこう", "向こう", 7000), Triple("あいだ", "間", 8000),
-            Triple("うち", "家", 9000), Triple("うち", "うち", 7000),
-            Triple("いえ", "家", 9000), Triple("へや", "部屋", 8000),
-            Triple("がっこう", "学校", 8000), Triple("かいしゃ", "会社", 8000),
-            Triple("びょういん", "病院", 7000), Triple("えき", "駅", 8000),
-            Triple("みせ", "店", 8000), Triple("みち", "道", 8000),
-            Triple("こうえん", "公園", 7000), Triple("としょかん", "図書館", 7000),
-            Triple("ゆうびんきょく", "郵便局", 6000), Triple("ぎんこう", "銀行", 7000),
-            Triple("ホテル", "ホテル", 7000),
-            // 数
-            Triple("いち", "1", 8000), Triple("いち", "一", 8000),
-            Triple("に", "2", 8000), Triple("に", "二", 8000),
-            Triple("さん", "3", 8000), Triple("さん", "三", 8000),
-            Triple("し", "4", 7000), Triple("し", "四", 7000),
-            Triple("よ", "4", 7000), Triple("よん", "4", 8000), Triple("よん", "四", 8000),
-            Triple("ご", "5", 8000), Triple("ご", "五", 8000),
-            Triple("ろく", "6", 8000), Triple("ろく", "六", 8000),
-            Triple("なな", "7", 8000), Triple("なな", "七", 8000),
-            Triple("しち", "7", 7000), Triple("しち", "七", 7000),
-            Triple("はち", "8", 8000), Triple("はち", "八", 8000),
-            Triple("きゅう", "9", 8000), Triple("きゅう", "九", 8000),
-            Triple("く", "9", 6000), Triple("じゅう", "10", 8000), Triple("じゅう", "十", 8000),
-            Triple("ひゃく", "百", 8000), Triple("せん", "千", 8000),
-            Triple("まん", "万", 8000), Triple("おく", "億", 7000),
-            // 人・関係
-            Triple("ひと", "人", 9000), Triple("おとこ", "男", 8000),
-            Triple("おんな", "女", 8000), Triple("こども", "子ども", 8000),
-            Triple("こ", "子", 8000), Triple("おとな", "大人", 8000),
-            Triple("ちち", "父", 8000), Triple("はは", "母", 8000),
-            Triple("おとうさん", "お父さん", 8000), Triple("おかあさん", "お母さん", 8000),
-            Triple("あに", "兄", 7000), Triple("あね", "姉", 7000),
-            Triple("おにいさん", "お兄さん", 7000), Triple("おねえさん", "お姉さん", 7000),
-            Triple("おとうと", "弟", 7000), Triple("いもうと", "妹", 7000),
-            Triple("ともだち", "友達", 9000), Triple("かのじょ", "彼女", 8000),
-            Triple("かれし", "彼氏", 8000), Triple("せんせい", "先生", 8000),
-            Triple("がくせい", "学生", 7000), Triple("かいしゃいん", "会社員", 7000),
-            // 挨拶・日常表現
-            Triple("おはよう", "おはよう", 8000), Triple("おはようございます", "おはようございます", 8000),
-            Triple("こんにちは", "こんにちは", 9000), Triple("こんばんは", "こんばんは", 8000),
-            Triple("さようなら", "さようなら", 7000), Triple("じゃあ", "じゃあ", 8000),
-            Triple("ありがとう", "ありがとう", 9000), Triple("ありがとうございます", "ありがとうございます", 9000),
-            Triple("すみません", "すみません", 9000), Triple("ごめんなさい", "ごめんなさい", 8000),
-            Triple("はい", "はい", 9000), Triple("いいえ", "いいえ", 8000),
-            Triple("うん", "うん", 8000), Triple("ううん", "ううん", 6000),
-            Triple("よろしく", "よろしく", 8000), Triple("よろしくおねがいします", "よろしくお願いします", 8000),
-            Triple("おつかれさまでした", "お疲れ様でした", 8000),
-            Triple("おつかれさま", "お疲れ様", 7000),
-            Triple("おねがいします", "お願いします", 8000),
-            Triple("おねがい", "お願い", 7000),
-            Triple("なるほど", "なるほど", 7000), Triple("そうですか", "そうですか", 7000),
-            Triple("わかりました", "わかりました", 8000), Triple("わかった", "わかった", 8000),
-            Triple("しつれいします", "失礼します", 7000),
-            // よく使う形容詞
-            Triple("いい", "いい", 9000), Triple("よい", "良い", 8000),
-            Triple("わるい", "悪い", 8000), Triple("おおきい", "大きい", 8000),
-            Triple("ちいさい", "小さい", 8000), Triple("ながい", "長い", 8000),
-            Triple("みじかい", "短い", 7000), Triple("たかい", "高い", 8000),
-            Triple("やすい", "安い", 8000), Triple("ひくい", "低い", 7000),
-            Triple("おもい", "重い", 7000), Triple("かるい", "軽い", 7000),
-            Triple("あたらしい", "新しい", 8000), Triple("ふるい", "古い", 7000),
-            Triple("はやい", "早い", 8000), Triple("はやい", "速い", 7000),
-            Triple("おそい", "遅い", 7000), Triple("むずかしい", "難しい", 8000),
-            Triple("やさしい", "優しい", 8000), Triple("やさしい", "易しい", 7000),
-            Triple("たのしい", "楽しい", 8000), Triple("かなしい", "悲しい", 7000),
-            Triple("うれしい", "嬉しい", 8000), Triple("つらい", "辛い", 7000),
-            Triple("いたい", "痛い", 7000), Triple("あたたかい", "温かい", 7000),
-            Triple("つめたい", "冷たい", 7000), Triple("あつい", "暑い", 7000),
-            Triple("さむい", "寒い", 7000), Triple("あかい", "赤い", 7000),
-            Triple("あおい", "青い", 7000), Triple("しろい", "白い", 7000),
-            Triple("くろい", "黒い", 7000), Triple("すごい", "すごい", 8000),
-            Triple("すごい", "凄い", 6000), Triple("かわいい", "可愛い", 8000),
-            Triple("きれい", "きれい", 8000), Triple("きれい", "綺麗", 7000),
-            Triple("おもしろい", "面白い", 8000), Triple("つまらない", "つまらない", 7000),
-            Triple("ただしい", "正しい", 7000), Triple("まちがい", "間違い", 7000),
-            Triple("たいせつ", "大切", 8000), Triple("だいじ", "大事", 8000),
-            Triple("だめ", "ダメ", 8000), Triple("だめ", "駄目", 6000),
-            Triple("むり", "無理", 8000),
-            // よく使う副詞・接続詞
-            Triple("とても", "とても", 9000), Triple("すごく", "すごく", 8000),
-            Triple("すこし", "少し", 8000), Triple("ちょっと", "ちょっと", 9000),
-            Triple("もっと", "もっと", 8000), Triple("もう", "もう", 9000),
-            Triple("まだ", "まだ", 9000), Triple("すでに", "既に", 7000),
-            Triple("もちろん", "もちろん", 8000), Triple("たぶん", "たぶん", 7000),
-            Triple("たぶん", "多分", 7000), Triple("きっと", "きっと", 7000),
-            Triple("ぜったい", "絶対", 8000), Triple("だいたい", "大体", 7000),
-            Triple("ほとんど", "ほとんど", 7000), Triple("ぜんぜん", "全然", 8000),
-            Triple("まったく", "全く", 7000), Triple("やはり", "やはり", 7000),
-            Triple("やっぱり", "やっぱり", 8000), Triple("なぜ", "なぜ", 7000),
-            Triple("どうして", "どうして", 7000), Triple("だから", "だから", 8000),
-            Triple("でも", "でも", 9000), Triple("しかし", "しかし", 7000),
-            Triple("けれど", "けれど", 7000), Triple("そして", "そして", 8000),
-            Triple("それから", "それから", 7000), Triple("また", "また", 8000),
-            Triple("あと", "あと", 8000), Triple("ところで", "ところで", 6000),
-            Triple("じつは", "実は", 7000), Triple("ちなみに", "ちなみに", 7000),
-            // 動詞
-            Triple("いく", "行く", 9000), Triple("くる", "来る", 9000),
-            Triple("かえる", "帰る", 8000), Triple("はいる", "入る", 8000),
-            Triple("でる", "出る", 8000), Triple("あく", "開く", 7000),
-            Triple("たつ", "立つ", 7000), Triple("すわる", "座る", 7000),
-            Triple("ある", "ある", 9000), Triple("いる", "いる", 9000),
-            Triple("する", "する", 9000), Triple("なる", "なる", 9000),
-            Triple("おもう", "思う", 8000), Triple("かんがえる", "考える", 8000),
-            Triple("わかる", "わかる", 9000), Triple("わかる", "分かる", 8000),
-            Triple("しる", "知る", 8000), Triple("みる", "見る", 9000),
-            Triple("きく", "聞く", 8000), Triple("よむ", "読む", 8000),
-            Triple("かく", "書く", 8000), Triple("はなす", "話す", 8000),
-            Triple("いう", "言う", 9000), Triple("たべる", "食べる", 8000),
-            Triple("のむ", "飲む", 8000), Triple("ねる", "寝る", 8000),
-            Triple("おきる", "起きる", 7000), Triple("あるく", "歩く", 7000),
-            Triple("はしる", "走る", 7000), Triple("かう", "買う", 8000),
-            Triple("つかう", "使う", 8000), Triple("つくる", "作る", 8000),
-            Triple("もつ", "持つ", 7000), Triple("おく", "置く", 7000),
-            Triple("とる", "取る", 7000), Triple("あそぶ", "遊ぶ", 7000),
-            Triple("べんきょうする", "勉強する", 7000), Triple("でんわする", "電話する", 7000),
-            Triple("おわる", "終わる", 7000), Triple("はじめる", "始める", 7000),
-            Triple("できる", "できる", 9000), Triple("できる", "出来る", 7000),
-            Triple("わすれる", "忘れる", 7000), Triple("かんじる", "感じる", 7000),
-            // 名詞
-            Triple("こと", "こと", 9000), Triple("こと", "事", 8000),
-            Triple("もの", "もの", 9000), Triple("もの", "物", 8000),
-            Triple("ところ", "ところ", 8000), Triple("とき", "時", 8000),
-            Triple("きもち", "気持ち", 8000), Triple("こころ", "心", 8000),
-            Triple("からだ", "体", 8000), Triple("あたま", "頭", 8000),
-            Triple("て", "手", 8000), Triple("あし", "足", 8000),
-            Triple("め", "目", 8000), Triple("かお", "顔", 7000),
-            Triple("なまえ", "名前", 8000), Triple("ことば", "言葉", 8000),
-            Triple("もんだい", "問題", 8000), Triple("こたえ", "答え", 7000),
-            Triple("いみ", "意味", 8000), Triple("りゆう", "理由", 7000),
-            Triple("はなし", "話", 8000), Triple("しごと", "仕事", 8000),
-            Triple("べんきょう", "勉強", 7000), Triple("りょこう", "旅行", 7000),
-            Triple("りょうり", "料理", 7000), Triple("おんがく", "音楽", 7000),
-            Triple("えいが", "映画", 7000), Triple("ほん", "本", 8000),
-            Triple("メール", "メール", 8000), Triple("でんわ", "電話", 8000),
-            Triple("スマホ", "スマホ", 8000), Triple("アプリ", "アプリ", 8000),
-            Triple("おかね", "お金", 9000), Triple("かいぎ", "会議", 7000),
-            Triple("やすみ", "休み", 8000), Triple("てんき", "天気", 8000),
-            Triple("あめ", "雨", 8000), Triple("ゆき", "雪", 7000),
-            Triple("ごはん", "ご飯", 9000), Triple("たべもの", "食べ物", 7000),
-            Triple("パン", "パン", 8000), Triple("コーヒー", "コーヒー", 8000),
-            Triple("おちゃ", "お茶", 8000), Triple("ビール", "ビール", 7000),
-            Triple("でんしゃ", "電車", 8000), Triple("くるま", "車", 8000),
-            Triple("にほん", "日本", 9000), Triple("とうきょう", "東京", 8000),
-            Triple("おおさか", "大阪", 7000), Triple("きょうと", "京都", 7000),
-            Triple("せかい", "世界", 8000),
-            Triple("しゃしん", "写真", 8000), Triple("どうが", "動画", 7000),
-            Triple("かくにん", "確認", 8000), Triple("れんらく", "連絡", 8000),
-            Triple("りょうかい", "了解", 8000), Triple("りょうかいです", "了解です", 7000),
-            Triple("しょうち", "承知", 6000), Triple("すこし", "少し", 8000),
-            Triple("たくさん", "たくさん", 8000), Triple("たくさん", "沢山", 6000)
-        )
-
-        for ((reading, surface, freq) in entries) {
-            add(reading, surface, freq)
-        }
-    }
-
     fun segment(input: String): List<Pair<String, List<String>>> {
         if (input.isEmpty()) return emptyList()
         val n = input.length
-        val dp = IntArray(n + 1) { Int.MAX_VALUE / 2 }
-        val from = IntArray(n + 1) { -1 }
-        dp[0] = 0
+        val ending = Array(n + 1) { ArrayList<Node>() }
+        ending[0].add(Node(0, BOS_EOS, "", -1, -1))
 
-        // 文節境界ごとの固定ペナルティ。過剰分割を抑えつつ助詞分割は許す
-        val segPenalty = 3500
-        for (i in 0 until n) {
-            if (dp[i] >= Int.MAX_VALUE / 2) continue
-            // 辞書未収録の1文字フォールバック（辞書語より高コスト）
-            val sc = dp[i] + 9000 + segPenalty
-            if (sc < dp[i + 1]) { dp[i + 1] = sc; from[i + 1] = i }
-            // 辞書マッチ
-            for (len in 1..minOf(16, n - i)) {
-                val sub = input.substring(i, i + len)
-                val best = index[sub]?.maxOfOrNull { it.second } ?: continue
-                val cost = dp[i] + (10000 - best.coerceAtMost(9999)) + segPenalty
-                if (cost < dp[i + len]) { dp[i + len] = cost; from[i + len] = i }
+        for (end in 1..n) {
+            val minStart = maxOf(0, end - 16)
+            for (start in minStart until end) {
+                val prev = ending[start]
+                if (prev.isEmpty()) continue
+                val sub = input.substring(start, end)
+                val cands = index[sub]
+                if (cands != null && cands.isNotEmpty()) {
+                    for (e in cands) addNode(ending[end], prev, e.cost, e.lid, e.rid, e.surface, start)
+                } else if (end - start == 1) {
+                    addNode(ending[end], prev, 12000, UNK_ID, UNK_ID, sub, start)
+                }
             }
         }
 
-        val segs = mutableListOf<String>()
-        var p = n
-        while (p > 0) {
-            val f = from[p]
-            if (f < 0) { p--; continue }
-            segs.add(0, input.substring(f, p))
-            p = f
+        val last = ending[n]
+        if (last.isEmpty()) return listOf(input to listOf(input))
+
+        var bestCost = Int.MAX_VALUE; var bestIdx = -1
+        for (i in last.indices) {
+            val c = last[i].cost + trans(last[i].rid, BOS_EOS)
+            if (c < bestCost) { bestCost = c; bestIdx = i }
         }
 
-        return segs.map { seg ->
-            val cands = (index[seg]
-                ?.sortedByDescending { it.second }
-                ?.map { it.first }
-                ?.distinct()
-                ?: emptyList())
-            val full = if (!cands.contains(seg)) cands + seg else cands
-            Pair(seg, full.take(30))
+        val spans = ArrayList<Pair<Int, Int>>()
+        val surfaces = ArrayList<String>()
+        var pos = n; var idx = bestIdx
+        while (pos > 0) {
+            val node = ending[pos][idx]
+            spans.add(node.start to pos)
+            surfaces.add(node.surface)
+            pos = node.start; idx = node.prevIdx
+        }
+        spans.reverse(); surfaces.reverse()
+
+        return spans.mapIndexed { i, span ->
+            val reading = input.substring(span.first, span.second)
+            val cands = LinkedHashSet<String>()
+            cands.add(surfaces[i])
+            index[reading]?.sortedBy { it.cost }?.forEach { cands.add(it.surface) }
+            cands.add(reading)
+            reading to cands.toList().take(30)
         }
     }
+
+    private fun addNode(dst: ArrayList<Node>, prev: ArrayList<Node>, wc: Int, lid: Int, rid: Int, surface: String, start: Int) {
+        var best = Int.MAX_VALUE; var bestPi = -1
+        for (pi in prev.indices) {
+            val p = prev[pi]
+            val c = p.cost + trans(p.rid, lid) + wc
+            if (c < best) { best = c; bestPi = pi }
+        }
+        if (bestPi >= 0) dst.add(Node(best, rid, surface, start, bestPi))
+    }
+
+    /** 入力全体の最尤変換文字列（COMPOSING 中のインライン変換候補用） */
+    fun bestConversion(input: String): String =
+        segment(input).joinToString("") { it.second.firstOrNull() ?: "" }
 }

@@ -112,7 +112,7 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
         scope.launch {
             dictionary.ensureLoaded()
             val reading = _composing.toString()
-            val segs = dictionary.segment(reading)
+            val segs = withContext(Dispatchers.Default) { dictionary.segment(reading) }
             if (segs.isEmpty()) {
                 val fromDict = dictionary.lookup(reading)
                 _candidates = buildCandidateList(reading, fromDict)
@@ -224,8 +224,18 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
             if (_state != InputState.COMPOSING || _composing.toString() != capturedReading) return@launch
             val lookupKey = if (mode == InputMode.ENGLISH) capturedReading.lowercase() else capturedReading
             val fromDict = withContext(Dispatchers.Default) { dictionary.lookup(lookupKey) }
+            if (_composing.toString() != capturedReading) return@launch
+            var built = buildCandidateList(capturedReading, fromDict)
+            // 一気に打った文の最尤変換を先頭候補に（連接コスト付きラティス）
+            if (mode == InputMode.JAPANESE && capturedReading.length in 2..24) {
+                val conv = withContext(Dispatchers.Default) { dictionary.bestConversion(capturedReading) }
+                if (_composing.toString() != capturedReading) return@launch
+                if (conv.isNotEmpty() && conv != capturedReading) {
+                    built = (listOf(conv) + built).distinct()
+                }
+            }
             if (_state == InputState.COMPOSING && _composing.toString() == capturedReading) {
-                _candidates = buildCandidateList(capturedReading, fromDict)
+                _candidates = built
                 notifyChanged()
             }
         }

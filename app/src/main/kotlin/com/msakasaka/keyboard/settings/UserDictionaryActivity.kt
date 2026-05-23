@@ -31,7 +31,7 @@ class UserDictionaryActivity : AppCompatActivity() {
             setDisplayHomeAsUpEnabled(true)
         }
 
-        dictionary = Dictionary(this)
+        dictionary = Dictionary.get(this)
         wordListLayout = findViewById(R.id.word_list)
         etReading = findViewById(R.id.et_reading)
         etSurface = findViewById(R.id.et_surface)

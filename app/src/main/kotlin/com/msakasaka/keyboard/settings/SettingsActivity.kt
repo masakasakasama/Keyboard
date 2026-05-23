@@ -34,6 +34,7 @@ import com.msakasaka.keyboard.ui.FlickKeyboardView
 import com.msakasaka.keyboard.ui.KeyboardListener
 import com.msakasaka.keyboard.ui.QwertyKeyboardView
 import com.msakasaka.keyboard.util.AutoUpdater
+import com.msakasaka.keyboard.util.EnglishText
 import com.msakasaka.keyboard.util.UpdateChecker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -187,11 +188,17 @@ class SettingsActivity : AppCompatActivity() {
 
         val listener = object : KeyboardListener {
             override fun onChar(ch: String) {
-                if (previewEngine.mode == InputMode.ENGLISH && !ch.matches(Regex("[a-zA-Z]"))) {
-                    commitPreviewComposing(inputText)
-                    previewCommitted.append(ch)
-                    inputText.setText(previewCommitted.toString())
-                    inputText.setSelection(previewCommitted.length)
+                if (previewEngine.mode == InputMode.ENGLISH) {
+                    if (ch.matches(Regex("[a-zA-Z]"))) {
+                        val input = if (previewEngine.composing.isEmpty() && ch[0].isLowerCase() &&
+                            EnglishText.shouldCapitalize(previewCommitted.toString())) ch.uppercase() else ch
+                        previewEngine.appendChar(input)
+                    } else {
+                        commitPreviewComposing(inputText)
+                        previewCommitted.append(ch)
+                        inputText.setText(previewCommitted.toString())
+                        inputText.setSelection(previewCommitted.length)
+                    }
                 } else {
                     previewEngine.appendChar(ch)
                 }
@@ -297,7 +304,8 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun commitPreviewComposing(inputText: EditText) {
-        val text = previewEngine.commitComposing()
+        val raw = previewEngine.commitComposing()
+        val text = if (previewEngine.mode == InputMode.ENGLISH) EnglishText.autoCorrect(raw) else raw
         if (text.isNotEmpty()) {
             previewCommitted.append(text)
             inputText.setText(previewCommitted.toString())
