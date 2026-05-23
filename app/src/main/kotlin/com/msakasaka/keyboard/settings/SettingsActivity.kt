@@ -278,11 +278,17 @@ class SettingsActivity : AppCompatActivity() {
         qwertyView.listener = listener
 
         btnJp.setOnClickListener {
+            commitPreviewComposing(inputText)
+            previewEngine.setMode(InputMode.JAPANESE)
+            flickView.currentMode = InputMode.JAPANESE
             flickView.visibility = View.VISIBLE
             qwertyView.visibility = View.GONE
             btnJp.alpha = 1f; btnEn.alpha = 0.5f
         }
         btnEn.setOnClickListener {
+            commitPreviewComposing(inputText)
+            previewEngine.setMode(InputMode.ENGLISH)
+            flickView.currentMode = InputMode.ENGLISH
             flickView.visibility = View.GONE
             qwertyView.visibility = View.VISIBLE
             btnJp.alpha = 0.5f; btnEn.alpha = 1f

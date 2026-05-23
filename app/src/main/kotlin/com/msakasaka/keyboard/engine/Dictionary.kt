@@ -28,6 +28,55 @@ class Dictionary(private val context: Context) {
 
     private val PREFIX_SCAN_CAP = 4000
 
+    // 打ち間違い補正用のアルファベット
+    private val HIRAGANA: CharArray = ('ぁ'..'ゖ').toList().toCharArray()
+    private val LATIN: CharArray = ('a'..'z').toList().toCharArray()
+
+    private fun hasKanji(s: String): Boolean = s.any { it.code in 0x4E00..0x9FFF }
+
+    /**
+     * 編集距離1の誤入力補正。reading の各位置を置換/挿入/削除/転置し、
+     * 辞書に存在する変換語を集める。requireKanji=true なら漢字を含む変換のみ
+     * （かな打ち間違いを漢字へ補正する用途）。コストは編集ペナルティで減点。
+     */
+    private fun fuzzyCorrections(reading: String, requireKanji: Boolean): List<Pair<String, Int>> {
+        if (reading.length < 3 || reading.length > 16) return emptyList()
+        val alphabet = when {
+            reading[0].code in 0x3041..0x3096 -> HIRAGANA
+            reading[0] in 'a'..'z' -> LATIN
+            else -> return emptyList()
+        }
+        val out = HashMap<String, Int>()
+        fun consider(variant: String, penalty: Int) {
+            if (variant == reading || variant.isEmpty()) return
+            val list = index[variant] ?: return
+            for ((s, f) in list) {
+                if (requireKanji && !hasKanji(s)) continue
+                val score = f - penalty
+                val prev = out[s]
+                if (prev == null || score > prev) out[s] = score
+            }
+        }
+        for (i in reading.indices) {
+            val pre = reading.substring(0, i)
+            val suf = reading.substring(i + 1)
+            for (c in alphabet) if (c != reading[i]) consider(pre + c + suf, 2000)
+        }
+        for (i in 0..reading.length) {
+            val pre = reading.substring(0, i)
+            val suf = reading.substring(i)
+            for (c in alphabet) consider(pre + c + suf, 2300)
+        }
+        for (i in reading.indices) consider(reading.removeRange(i, i + 1), 2500)
+        for (i in 0 until reading.length - 1) {
+            if (reading[i] == reading[i + 1]) continue
+            val sb = StringBuilder(reading)
+            sb[i] = reading[i + 1]; sb[i + 1] = reading[i]
+            consider(sb.toString(), 2200)
+        }
+        return out.entries.sortedByDescending { it.value }.map { it.key to it.value }.take(8)
+    }
+
     private val userPrefs: SharedPreferences
         get() = context.getSharedPreferences("user_dict", Context.MODE_PRIVATE)
 
@@ -116,7 +165,15 @@ class Dictionary(private val context: Context) {
             idx++
         }
 
-        return (exactMatches + prefixMatches)
+        var combined: List<Pair<String, Int>> = exactMatches + prefixMatches
+
+        // 誤入力補正：通常候補に有効な変換が無いときだけ編集距離1で補う
+        val isJa = reading[0].code in 0x3041..0x3096
+        val needFuzzy = if (isJa) combined.none { hasKanji(it.first) }
+                        else combined.count { it.first != reading } < 3
+        if (needFuzzy) combined = combined + fuzzyCorrections(reading, requireKanji = isJa)
+
+        return combined
             .sortedByDescending { it.second }
             .map { it.first }
             .distinct()
