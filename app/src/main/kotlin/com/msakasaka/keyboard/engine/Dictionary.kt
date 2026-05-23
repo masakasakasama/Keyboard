@@ -9,9 +9,24 @@ data class DictEntry(val reading: String, val surface: String, val freq: Int)
 
 class Dictionary(private val context: Context) {
 
+    companion object {
+        @Volatile
+        private var instance: Dictionary? = null
+
+        /** プロセス内で辞書を1つだけ共有（IME と設定プレビューで二重ロードを避ける） */
+        fun get(context: Context): Dictionary =
+            instance ?: synchronized(this) {
+                instance ?: Dictionary(context.applicationContext).also { instance = it }
+            }
+    }
+
     // reading -> list of (surface, freq)
-    private val index = HashMap<String, MutableList<Pair<String, Int>>>(65536)
+    private val index = HashMap<String, MutableList<Pair<String, Int>>>(1 shl 19)
+    // lexicographically sorted keys for fast prefix range scan
+    private var sortedKeys: Array<String> = emptyArray()
     private var loaded = false
+
+    private val PREFIX_SCAN_CAP = 4000
 
     private val userPrefs: SharedPreferences
         get() = context.getSharedPreferences("user_dict", Context.MODE_PRIVATE)
@@ -19,9 +34,13 @@ class Dictionary(private val context: Context) {
     suspend fun ensureLoaded() {
         if (loaded) return
         withContext(Dispatchers.IO) {
+            loadFunctionWords()
             loadBuiltIn()
-            loadFromAssets()
+            loadFromAssets("japanese_dictionary.txt")
+            loadFromAssets("english_dictionary.txt")
             loadUserData()
+            sortedKeys = index.keys.toTypedArray()
+            sortedKeys.sort()
             loaded = true
         }
     }
@@ -67,22 +86,34 @@ class Dictionary(private val context: Context) {
     }
 
     /** ひらがな読みが reading で始まるエントリを返す。頻度順、最大 limit 件 */
-    fun lookup(reading: String, limit: Int = 40): List<String> {
+    fun lookup(reading: String, limit: Int = 60): List<String> {
         if (reading.isEmpty()) return emptyList()
 
         // 完全一致は最優先（基本周波数 +1000 ブースト）
         val exactMatches = index[reading]?.map { Pair(it.first, it.second + 1000) } ?: emptyList()
 
-        // 前方一致：1文字でも有効。長い単語の頻度は短さで割り引く
+        // 前方一致：ソート済みキー配列を二分探索し、prefix 範囲だけを走査
         val prefixMatches = mutableListOf<Pair<String, Int>>()
-        for ((key, pairs) in index) {
-            if (key != reading && key.startsWith(reading)) {
+        val keys = sortedKeys
+        var lo = 0
+        var hi = keys.size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (keys[mid] < reading) lo = mid + 1 else hi = mid
+        }
+        var idx = lo
+        var visited = 0
+        while (idx < keys.size && keys[idx].startsWith(reading) && visited < PREFIX_SCAN_CAP) {
+            val key = keys[idx]
+            if (key != reading) {
                 // 同じ短い読みのほうが優先されるよう、長さ差で減点
                 val penalty = (key.length - reading.length) * 120
-                for ((surface, freq) in pairs) {
+                index[key]?.forEach { (surface, freq) ->
                     prefixMatches.add(Pair(surface, freq - penalty))
                 }
+                visited++
             }
+            idx++
         }
 
         return (exactMatches + prefixMatches)
@@ -114,9 +145,9 @@ class Dictionary(private val context: Context) {
         }
     }
 
-    private fun loadFromAssets() {
+    private fun loadFromAssets(fileName: String) {
         try {
-            context.assets.open("japanese_dictionary.txt").bufferedReader(Charsets.UTF_8).use { br ->
+            context.assets.open(fileName).bufferedReader(Charsets.UTF_8).use { br ->
                 var line = br.readLine()
                 while (line != null) {
                     if (line.isNotEmpty() && line[0] != '#') {
@@ -135,6 +166,29 @@ class Dictionary(private val context: Context) {
                 }
             }
         } catch (_: Exception) {}
+    }
+
+    /**
+     * 助詞・助動詞・語尾・頻出かな語を最優先(10000)で登録。
+     * 単語コストモデルだけでは同音異義の漢字に負けがちな機能語を、
+     * 文節分割でも候補表示でも先頭に来るよう底上げする。
+     */
+    private fun loadFunctionWords() {
+        val words = listOf(
+            // 助詞
+            "は", "が", "を", "に", "へ", "と", "も", "の", "や", "ね", "よ", "わ", "か",
+            "から", "まで", "より", "など", "ので", "のに", "けど", "けれど",
+            "のは", "には", "とは", "では", "って", "でも", "ても", "し", "ば",
+            // 助動詞・語尾・コピュラ
+            "です", "ます", "だ", "た", "て", "ない", "ません", "でした", "ました",
+            "ましょう", "ませんでした", "たい", "でしょう", "だろう", "である",
+            "ている", "ています", "ていた", "なる", "れる", "られる", "せる",
+            // 頻出かな動詞・連体詞・名詞
+            "する", "いる", "ある", "できる",
+            "これ", "それ", "あれ", "この", "その", "あの",
+            "こと", "もの", "ため", "とき", "よう", "そう", "いい"
+        )
+        for (w in words) add(w, w, 10000)
     }
 
     private fun loadBuiltIn() {
@@ -355,16 +409,18 @@ class Dictionary(private val context: Context) {
         val from = IntArray(n + 1) { -1 }
         dp[0] = 0
 
+        // 文節境界ごとの固定ペナルティ。過剰分割を抑えつつ助詞分割は許す
+        val segPenalty = 3500
         for (i in 0 until n) {
-            if (dp[i] == Int.MAX_VALUE / 2) continue
-            // single-char fallback
-            val sc = dp[i] + 8000
+            if (dp[i] >= Int.MAX_VALUE / 2) continue
+            // 辞書未収録の1文字フォールバック（辞書語より高コスト）
+            val sc = dp[i] + 9000 + segPenalty
             if (sc < dp[i + 1]) { dp[i + 1] = sc; from[i + 1] = i }
-            // dictionary matches
-            for (len in 1..minOf(12, n - i)) {
+            // 辞書マッチ
+            for (len in 1..minOf(16, n - i)) {
                 val sub = input.substring(i, i + len)
                 val best = index[sub]?.maxOfOrNull { it.second } ?: continue
-                val cost = dp[i] + (10000 - best.coerceAtMost(9999))
+                val cost = dp[i] + (10000 - best.coerceAtMost(9999)) + segPenalty
                 if (cost < dp[i + len]) { dp[i + len] = cost; from[i + len] = i }
             }
         }
@@ -385,7 +441,7 @@ class Dictionary(private val context: Context) {
                 ?.distinct()
                 ?: emptyList())
             val full = if (!cands.contains(seg)) cands + seg else cands
-            Pair(seg, full.take(15))
+            Pair(seg, full.take(30))
         }
     }
 }

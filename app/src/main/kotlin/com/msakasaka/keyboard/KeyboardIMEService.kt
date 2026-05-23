@@ -47,7 +47,7 @@ class KeyboardIMEService : InputMethodService() {
 
     override fun onCreate() {
         super.onCreate()
-        dictionary = Dictionary(this)
+        dictionary = Dictionary.get(this)
         engine = JapaneseInputEngine(dictionary)
         settings = KeyboardSettings(this)
         clipboardHelper = ClipboardHelper(this)

@@ -146,7 +146,7 @@ class SettingsActivity : AppCompatActivity() {
         // prevent system keyboard from showing
         inputText.showSoftInputOnFocus = false
 
-        val dict = Dictionary(this)
+        val dict = Dictionary.get(this)
         previewEngine = JapaneseInputEngine(dict)
         previewScope.launch(Dispatchers.IO) { dict.ensureLoaded() }
 

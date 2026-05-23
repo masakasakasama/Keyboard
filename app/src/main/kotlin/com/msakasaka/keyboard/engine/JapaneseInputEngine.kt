@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class InputMode { JAPANESE, ENGLISH }
 enum class InputState { COMPOSING, CONVERTING, SEGMENTED, IDLE }
@@ -220,9 +221,10 @@ class JapaneseInputEngine(private val dictionary: Dictionary) {
         val capturedReading = _composing.toString()
         scope.launch {
             dictionary.ensureLoaded()
+            if (_state != InputState.COMPOSING || _composing.toString() != capturedReading) return@launch
+            val lookupKey = if (mode == InputMode.ENGLISH) capturedReading.lowercase() else capturedReading
+            val fromDict = withContext(Dispatchers.Default) { dictionary.lookup(lookupKey) }
             if (_state == InputState.COMPOSING && _composing.toString() == capturedReading) {
-                val lookupKey = if (mode == InputMode.ENGLISH) capturedReading.lowercase() else capturedReading
-                val fromDict = dictionary.lookup(lookupKey)
                 _candidates = buildCandidateList(capturedReading, fromDict)
                 notifyChanged()
             }
